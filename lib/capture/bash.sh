@@ -34,7 +34,27 @@
 # ------------------------------------------------------------------ #
 
 __cmdscribe_bash_run() {
-    local _cs_rc=$? _cs_line _cs_cmd _cs_trim _cs_num
+    local _cs_rc=$? _cs_line _cs_cmd
+
+    # Re-assert HISTCONTROL on every prompt, not just at install.
+    #
+    # Setting it once from /etc/profile.d is not enough: ~/.bashrc runs after
+    # profile.d and routinely overwrites it. Measured on the CI runner, where
+    # the value in the live shell was `ignoredups:ignorespace` despite the hook
+    # having set `ignoredups`. Both halves are bad here:
+    #
+    #   ignorespace  a leading space keeps a command out of history entirely,
+    #                so `history 1` returns the PREVIOUS command and the record
+    #                is a false attribution with a borrowed exit status. It is a
+    #                one-keystroke evasion for anyone who knows the hook exists.
+    #   ignoredups   a command equal to the previous history entry is not added,
+    #                which is the same failure by different means -- and it can
+    #                fire on the very first command of a session, because the
+    #                previous entry came out of HISTFILE.
+    #
+    # Empty means "store everything". This is a logger; history fidelity beats
+    # whatever the user's dotfiles wanted.
+    HISTCONTROL=
 
     # SC1007: the space after `=` is deliberate. HISTTIMEFORMAT must be
     # empty for this one `history` call; `HISTTIMEFORMAT=history 1` would
@@ -52,24 +72,14 @@ __cmdscribe_bash_run() {
               | sed -E -e 's/^[[:space:]]*[0-9]+[[:space:]]*//')
 
     # The line that sourced us is not something anyone typed to be audited.
-    # Match it by content so this works even when the baseline is unavailable.
+    # Matched by content, deliberately: an earlier revision also skipped any
+    # entry at or below the history number seen at install time, which sounds
+    # tighter but silently discarded real commands whenever history was short
+    # by one. A logger that drops records to avoid one cosmetic artefact has
+    # the trade backwards, so the artefact is handled here and nowhere else.
     case "$_cs_cmd" in
         ". "*entry.bash*|"source "*entry.bash*) return 0 ;;
     esac
-
-    # And by position: anything at or below the history number observed when
-    # the hook went in predates the hook, so the hook cannot vouch for it.
-    # Parsed with parameter expansion rather than another sed, because this
-    # function runs after every single command and a fork per command is a
-    # regression you pay for forever.
-    if [ -n "$__CMDSCRIBE_HISTBASE" ]; then
-        _cs_trim=${_cs_line#"${_cs_line%%[![:space:]]*}"}
-        _cs_num=${_cs_trim%%[!0-9]*}
-        case $_cs_num in
-            ''|*[!0-9]*) ;;                       # unparseable: emit anyway
-            *) [ "$_cs_num" -le "$__CMDSCRIBE_HISTBASE" ] && return 0 ;;
-        esac
-    fi
 
     cmdscribe_emit "$_cs_cmd" "$_cs_rc"
 }
@@ -90,28 +100,10 @@ __cmdscribe_bash_install() {
     set -o history 2>/dev/null
 
     unset HISTIGNORE
-    export HISTCONTROL=ignoredups
-
-    # Where history stands right now. Everything at or below this number was
-    # already in the list before the hook existed, so it is either the line
-    # that sourced us or a previous session's last command -- neither is
-    # something this hook can vouch for.
-    #
-    # This replaces an earlier `__CMDSCRIBE_ARMED` flag that discarded the
-    # first PROMPT_COMMAND invocation outright. That was a guess dressed up as
-    # a rule: it is correct only when the first invocation happens to land on
-    # the sourcing artifact. CI found a host where the first invocation landed
-    # on a real command instead -- a login shell that read buffered input
-    # before drawing its first prompt -- and the hook silently threw that
-    # command away. In an auditing tool, "sometimes we drop a command and do
-    # not say so" is the worst defect available, and SECURITY.md limitation 6
-    # describes how to widen that window deliberately. Compare numbers instead
-    # of counting invocations: nothing typed is ever discarded, and nothing
-    # untyped is ever attributed.
-    # shellcheck disable=SC1007  # same deliberate empty HISTTIMEFORMAT as above
-    __CMDSCRIBE_HISTBASE=$(HISTTIMEFORMAT= history 1 2>/dev/null \
-                           | sed -E -e 's/^[[:space:]]*([0-9]+).*/\1/')
-
+    # Deliberately NOT exporting HISTCONTROL here. It belongs in the run
+    # function, which executes after every prompt and therefore after any
+    # ~/.bashrc has had its say; set once here it is simply overwritten by the
+    # first user rc file that assigns it, which is most of them.
     export PROMPT_COMMAND=__cmdscribe_bash_run
 }
 
