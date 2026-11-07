@@ -9,6 +9,7 @@
 #
 #   ./install.sh              shell layer + system log sink
 #   ./install.sh --auditd     also the auditd rules (Linux)
+#   ./install.sh --logfile    also a plain text file to tail (macOS)
 #
 # Uninstall with ./uninstall.sh, which replays the manifest written here.
 #
@@ -25,7 +26,15 @@ MANIFEST=$STATE/installed.manifest
 SRC=$(cd "$(dirname "$0")" && pwd)
 MARK='# cmdscribe'
 WITH_AUDITD=0
-[ "${1:-}" = "--auditd" ] && WITH_AUDITD=1
+WITH_LOGFILE=0
+LOGFILE_PATH=/var/log/cmdscribe.log
+for _arg in "$@"; do
+    case "$_arg" in
+        --auditd)  WITH_AUDITD=1 ;;
+        --logfile) WITH_LOGFILE=1 ;;
+        *) echo "unknown option: $_arg" >&2; exit 2 ;;
+    esac
+done
 
 [ "$(id -u)" -eq 0 ] || { echo "must run as root" >&2; exit 1; }
 
@@ -57,6 +66,10 @@ chmod -R a+rX "$PREFIX"
 say "installed runtime to $PREFIX"
 
 # ---- 2. shell hooks ------------------------------------------------ #
+# Optional env prefix for the hook line, so the shell that sources the
+# entry file also learns where the convenience log is.
+LOGVAR=""
+
 # hook_into <file> <line> [create]
 #   existing file  -> back up, append one marked line
 #   missing file   -> only touched if "create" was passed (used for the
@@ -107,9 +120,24 @@ case "$OS" in
         done
         ;;
     Darwin)
-        hook_into /etc/zshrc   ". $PREFIX/entry.zsh"
-        hook_into /etc/bashrc  ". $PREFIX/entry.bash"
-        hook_into /etc/profile ". $PREFIX/entry.bash"
+        if [ "$WITH_LOGFILE" = 1 ]; then
+            # logger(1) cannot do this on macOS: it posts to the unified log
+            # and never reaches syslogd's asl file routing. Verified, after a
+            # first attempt at an asl rule captured 41 unrelated lines and
+            # none of ours.
+            if [ ! -e "$LOGFILE_PATH" ]; then
+                install -o root -g admin -m 0660 /dev/null "$LOGFILE_PATH"
+                rec R "$LOGFILE_PATH"
+            fi
+            LOGVAR="CMDSCRIBE_LOGFILE=$LOGFILE_PATH; "
+            say "also writing $LOGFILE_PATH (0660 root:admin)"
+            say "  WARNING: the shell appends this file itself, so anyone who"
+            say "  can type here can also truncate it. It is for eyeballing."
+            say "  The unified log remains the record of authority."
+        fi
+        hook_into /etc/zshrc   "${LOGVAR}. $PREFIX/entry.zsh"
+        hook_into /etc/bashrc  "${LOGVAR}. $PREFIX/entry.bash"
+        hook_into /etc/profile "${LOGVAR}. $PREFIX/entry.bash"
         ;;
     *)
         say "unsupported OS: $OS"
@@ -121,6 +149,11 @@ esac
 # ---- 3. sink ------------------------------------------------------- #
 case "$OS" in
     Linux)
+        if [ "$WITH_LOGFILE" = 1 ]; then
+            say "--logfile ignored on Linux: rsyslog already writes"
+            say "$LOGFILE_PATH as root with 0600, which is strictly better"
+            say "than a file the typing user appends to themselves"
+        fi
         if [ -d /etc/rsyslog.d ]; then
             install -m 0644 -o root -g root \
                 "$SRC/platform/linux/10-cmdscribe.conf" /etc/rsyslog.d/

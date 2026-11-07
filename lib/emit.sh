@@ -24,7 +24,7 @@
 
 cmdscribe_emit() {
     # $1 = command text, $2 = exit status
-    local _cs_cmd="$1" _cs_rc="$2"
+    local _cs_cmd="$1" _cs_rc="$2" _cs_rec
 
     # A command typed with a literal newline would otherwise let a user
     # forge arbitrary syslog records. Collapse, do not reject.
@@ -36,6 +36,26 @@ cmdscribe_emit() {
     [ "${#_cs_cmd}" -gt "$CMDSCRIBE_MAX" ] \
         && _cs_cmd="${_cs_cmd:0:$CMDSCRIBE_MAX}...[truncated]"
 
+    _cs_rec="login=$(cmdscribe_origin) actas=$(id -un) pid=$$ ppid=$PPID tty=$(cmdscribe_tty) rc=$_cs_rc :: $_cs_cmd"
+
     logger -p "$CMDSCRIBE_FACILITY" -t "$CMDSCRIBE_TAG" -- \
-        "${CMDSCRIBE_MSG_PREFIX}login=$(cmdscribe_origin) actas=$(id -un) pid=$$ ppid=$PPID tty=$(cmdscribe_tty) rc=$_cs_rc :: $_cs_cmd"
+        "${CMDSCRIBE_MSG_PREFIX}$_cs_rec"
+
+    # Optional plain-file copy, for platforms whose logger cannot be told
+    # to write one. On macOS that is not laziness: logger(1) posts to the
+    # unified log and does NOT traverse syslogd's asl file routing, so no
+    # /etc/asl.conf rule can produce this file. Measured -- a rule matching
+    # Facility local0 captured 41 unrelated lines and none of ours.
+    #
+    # The tradeoff, stated because it is real: the shell appends here
+    # directly, so whoever can type can also truncate this file. It is a
+    # convenience copy for eyeballing, NOT the record of authority. On
+    # Linux that is rsyslog's file, written by root with 0600 and outside
+    # the typing user's reach; keep using that where you have it.
+    if [ -n "${CMDSCRIBE_LOGFILE:-}" ]; then
+        printf '%s %s %s\n' \
+            "$(date '+%b %e %H:%M:%S')" "${CMDSCRIBE_HOSTNAME:-$(hostname)}" \
+            "${CMDSCRIBE_MSG_PREFIX}$_cs_rec" \
+            >> "$CMDSCRIBE_LOGFILE" 2>/dev/null || true
+    fi
 }

@@ -79,6 +79,20 @@ stock Mac nothing writes `/var/log/cmdscribe.log`, and shipping a rotation
 rule for a file that never appears is how a box ends up looking like it
 keeps logs when it keeps none.
 
+**That mitigation does not work, and was removed as an option.** Tested on
+macOS 27.2: `logger(1)` posts to the unified log and never reaches syslogd's
+asl file routing at all. A rule matching `Facility local0` wrote 41 lines to
+the target file and not one of them was ours. There is no asl
+configuration that produces a cmdscribe file on this macOS.
+
+`./install.sh --logfile` is the alternative, and it is weaker in a specific
+way: the shell appends the file itself, so the subject of the log can
+truncate it. It is created `0660 root:admin`, which on a Mac means every
+administrator can read **and erase** it. Treat it as a convenience copy for
+looking at output. The unified log stays the record of authority — which,
+again, is already world-readable, so the file adds no new exposure, it just
+adds no new protection either.
+
 ## Secrets in argv are recorded. This is not a bug you can fix.
 
 Both layers capture argv. Therefore:

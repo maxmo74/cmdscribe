@@ -104,8 +104,9 @@ not a reasonable thing to assume about someone else's host. It reports
 ## Install
 
 ```sh
-./install.sh              # shell layer + rsyslog sink
-./install.sh --auditd     # also the auditd rules
+./install.sh              # shell layer + system log sink
+./install.sh --auditd     # also the auditd rules (Linux)
+./install.sh --logfile    # also a plain file to tail (macOS)
 ```
 
 Then open a **new** shell and:
@@ -132,6 +133,26 @@ looking like an idle machine, which is the worst way for a query to fail.
 Also note that on macOS these records are readable by **any** local user,
 because the unified log is not access-controlled the way a `0600` file is.
 See [SECURITY.md](SECURITY.md).
+
+### Getting a file to tail on macOS
+
+There is no `/var/log/cmdscribe.log` on a default macOS install, and no
+syslog configuration will create one: `logger(1)` posts to the unified log
+and never reaches syslogd's asl file routing. (A rule matching
+`Facility local0` captured 41 unrelated lines and none of cmdscribe's.)
+
+`./install.sh --logfile` makes the shell append a plain file itself:
+
+```sh
+sudo tail -f /var/log/cmdscribe.log
+```
+
+Read the caveat before using it: the shell writes that file directly, so
+anyone who can type can also truncate it. It is a convenience copy for
+eyeballing, not the record of authority — the unified log is. On Linux this
+option is ignored on purpose, because rsyslog already writes the same path
+as root at `0600`, which is strictly better than a file the subject of the
+log appends to themselves.
 
 Not `process == "cmdscribe"`. macOS `logger(1)` **discards the `-t` tag**,
 so the record is filed under `process=/usr/bin/logger` and that predicate
