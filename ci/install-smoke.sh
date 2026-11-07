@@ -52,7 +52,8 @@ step "0. starting state"
 [ ! -e "$LOG" ] || die "$LOG already exists; this test needs a clean host"
 [ ! -e /etc/rsyslog.d/10-cmdscribe.conf ] || die "cmdscribe rsyslog rule already present"
 
-step "1. install"# The single most important assertion in this file is just this: that
+step "1. install"
+# The single most important assertion in this file is just this: that
 # install.sh exits 0 on a Linux host.
 ./install.sh || die "install.sh exited non-zero on Linux"
 
@@ -131,7 +132,13 @@ if ! grep -q "$MARK" "$LOG"; then
     fi
     printf '   (%s records written by the scrubbed session)\n' "$new"
 
-    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+    # CMDSCRIBE_CI is passed explicitly by the workflow rather than inferred
+    # from GITHUB_ACTIONS, because this script runs under `sudo -E`, which does
+    # not reliably carry that variable through -- the first version of this skip
+    # tested GITHUB_ACTIONS and silently never fired. A workflow that knows it is
+    # CI should say so instead of leaving the script to guess from an
+    # environment the privilege change may have laundered.
+    if [ "${CMDSCRIBE_CI:-}" = "1" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
         # LOUD SKIP -- not a silent one, which is the whole distinction.
         #
         # On GitHub Actions runners only, in the first bash session after

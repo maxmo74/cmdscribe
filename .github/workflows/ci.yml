@@ -135,7 +135,12 @@ jobs:
           test ! -e /etc/rsyslog.d/10-cmdscribe.conf || { echo "rule already present"; exit 1; }
           echo "clean"
       - name: sudo ci/install-smoke.sh
-        run: sudo -E env "PATH=$PATH" ./ci/install-smoke.sh
+        # CMDSCRIBE_CI is passed explicitly rather than inferred. `sudo -E` does
+        # not reliably carry GITHUB_ACTIONS into the script -- an earlier version
+        # tested GITHUB_ACTIONS and the one documented skip silently never
+        # fired, which is the kind of failure that looks like a passing test.
+        # A workflow that knows it is CI should say so.
+        run: sudo -E env "PATH=$PATH" CMDSCRIBE_CI=1 ./ci/install-smoke.sh
       - name: Upload transcripts on failure
         if: failure()
         uses: actions/upload-artifact@v4
