@@ -95,6 +95,27 @@ if ! grep -q "$MARK" "$LOG"; then
         python3 tests/drive-pty.py bash system 30 /tmp/smoke-diag.log >/dev/null 2>&1
     printf '   every record in %s (%s lines):\n' "$LOG" "$(wc -l < "$LOG")"
     cat "$LOG"
+
+    # Attribution, not a fix. The pty'd shell inherits this job step's whole
+    # environment, and GitHub's bash shell integration demonstrably reaches the
+    # child (those OSC 3008 markers in the transcript are not ours). Re-run the
+    # identical probe with nothing inherited but PATH, HOME and TERM. If command
+    # one appears, the cause is the inherited environment and not cmdscribe --
+    # which is a fact worth having in writing rather than inferring for a fifth
+    # time.
+    printf '\n   retrying with a scrubbed environment\n'
+    n0=$(wc -l < "$LOG")
+    env -i PATH="$PATH" HOME="$HOME" TERM=xterm \
+        python3 tests/drive-pty.py bash system 30 /tmp/smoke-clean.log >/dev/null 2>&1
+    sleep 2
+    new=$(( $(wc -l < "$LOG") - n0 ))
+    if tail -n "$new" "$LOG" | grep -q "$MARK"; then
+        printf '   RESULT: recorded with a clean env -> the inherited CI environment is implicated\n'
+    else
+        printf '   RESULT: still missing with a clean env -> not the inherited environment\n'
+    fi
+    printf '   (%s records written by the scrubbed session)\n' "$new"
+
     die "probe command not recorded by bash"
 fi
 printf '   bash recorded: %s\n' "$(grep -m1 "$MARK" "$LOG" | sed 's/.*:: //')"
