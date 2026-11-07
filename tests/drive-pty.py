@@ -82,8 +82,42 @@ def main() -> int:
                     sink_log.flush()
         return True
 
-    if not drain(0.5):
-        pass
+    def wait_ready(quiet=0.5, max_wait=20.0):
+        """Block until the shell stops producing output, i.e. until it is
+        sitting at a prompt waiting for input. Returns False if the child died.
+
+        This replaces a fixed `drain(0.5)`, which was a race. On a loaded
+        machine bash has not finished reading /etc/profile when the first
+        command is written: the tty echoes it as type-ahead, the command runs,
+        and the hook -- installed by the very rc files still being read --
+        never sees it. Command number one is simply absent from the log.
+
+        Measured, not theorised: the GitHub Actions runner lost `echo
+        IT_PROBE` exactly this way while a quiet Debian box never did, which is
+        the signature of a timing bug rather than a product bug. A human waits
+        for the prompt; so does the harness now.
+        """
+        end_all = time.time() + max_wait
+        last = time.time()
+        while time.time() < end_all:
+            r, _, _ = select.select([fd], [], [], 0.1)
+            if r:
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    return False
+                if not chunk:
+                    return False
+                if sink_log:
+                    sink_log.write(chunk)
+                    sink_log.flush()
+                last = time.time()
+            elif time.time() - last >= quiet:
+                return True
+        return True
+
+    # Startup output is consumed; readiness is quiescence, not a stopwatch.
+    wait_ready()
     for c in cmds:
         if time.time() > deadline:
             break

@@ -139,3 +139,16 @@ person. If you need a support commitment, this is not that.
    than the Linux version, whatever the platform marketing says.
 5. The `sudo su -` attribution heuristic is unmeasured. It has been
    observed to work; nobody has counted how often it is right.
+6. A command typed **before the shell finishes starting up can be missed**.
+   The hook is installed by the rc files, so anything executed while they are
+   still being read predates the hook. This is not hypothetical: the test
+   harness slept a fixed 0.5s after forking and then typed, and on a loaded
+   GitHub Actions runner the first command of the session was lost every time
+   while a quiet Debian box never showed it — the signature of a race, not of
+   a product defect, but the product defect is the same one. A human typing
+   during a slow `ssh` connect is in exactly this window. It is milliseconds
+   wide and not zero, and anyone who can slow shell startup — a hung `sssd`
+   behind `pam_loginuid`, a dead NFS mount holding up `/etc/profile` — can
+   widen it at will. The shell layer cannot close this by construction; the
+   kernel layer sees the `execve` regardless, which is the honest argument for
+   running both.

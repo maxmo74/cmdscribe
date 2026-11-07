@@ -103,7 +103,29 @@ def drain(t=0.8):
             except OSError:
                 break
 
-drain(0.5)
+def wait_ready(quiet=0.5, max_wait=20.0):
+    # Wait until the shell stops emitting output, i.e. it is sitting at a
+    # prompt, rather than trusting a fixed sleep. Same race as in
+    # tests/drive-pty.py: type-ahead written before the rc files finish is
+    # executed without the hook being installed yet, and the first command
+    # silently never reaches the log. Here the shells start with --norc/-d so
+    # startup is quick and the old 0.5s usually won -- which is exactly how a
+    # race survives review.
+    end_all = time.time() + max_wait
+    last = time.time()
+    while time.time() < end_all:
+        r, _, _ = select.select([fd], [], [], 0.1)
+        if r:
+            try:
+                if not os.read(fd, 4096):
+                    return
+            except OSError:
+                return
+            last = time.time()
+        elif time.time() - last >= quiet:
+            return
+
+wait_ready()
 for c in cmds:
     os.write(fd, c.encode())
     drain(0.8)
