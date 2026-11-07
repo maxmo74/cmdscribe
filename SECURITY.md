@@ -60,6 +60,25 @@ Enforced in three places, all of which must stay:
 on an installed host. Verified on Debian 13: the log lands `0600
 root:root`, and `sudo -u nobody cat` gets `Permission denied`.
 
+### On Ubuntu it lands `0600 syslog:syslog` instead
+
+Found by CI on a third distro; Debian had been hiding it. rsyslog's
+`fileOwner="root"` is a request, not a guarantee — it can only chown if rsyslog
+itself runs as root, and Ubuntu ships rsyslog running as the unprivileged
+`syslog` user. So the file is created `syslog:syslog` and rsyslog has no power
+to make it anything else.
+
+The confidentiality claim survives: `0600` leaves only that account and root
+able to read it. What does not survive is the identity of the reader. **On
+Ubuntu the rsyslog service account can read your command log**, and on Debian it
+cannot. If that account is shared, compromised, or runs anything else you did
+not choose, treat the log as readable by it. Set the group to a dedicated group
+you control, or ship off-box, if that matters in your environment.
+
+`ci/install-smoke.sh` asserts the mode unconditionally and accepts either
+owner, failing on anything else — because asserting `root:root` here would have
+made the test wrong rather than the host.
+
 ### macOS has none of this protection
 
 On macOS the records go into the **unified log**, which any local user can

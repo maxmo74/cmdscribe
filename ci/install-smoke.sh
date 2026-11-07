@@ -250,8 +250,29 @@ printf '   collapsed into one record in both shells\n'
 step "6. the log is not readable by the people it records"
 perms=$(stat -c '%a' "$LOG")
 owner=$(stat -c '%U:%G' "$LOG")
+# The mode is the property that actually protects anyone, so it is asserted
+# without exception. A command log that anyone can read is a credential leak on
+# every host it sits on.
 [ "$perms" = "600" ] || die "$LOG is mode $perms, expected 0600"
-[ "$owner" = "root:root" ] || die "$LOG is owned by $owner, expected root:root"
+#
+# Ownership is more interesting than it first looks. rsyslog's fileOwner="root"
+# is a request that rsyslog can only honour when it runs as root. Debian does;
+# Ubuntu ships rsyslog as the unprivileged `syslog` user, so the file lands
+# syslog:syslog and nothing can do otherwise. Confidentiality still holds --
+# 0600 leaves only that account and root -- but asserting root:root here would
+# have made the TEST wrong rather than the host, which is the worse outcome.
+# Any owner besides those two is still a hard failure.
+case "$owner" in
+    root:root) ;;
+    syslog:syslog)
+        printf '   NOTE: %s is %s, not root:root.\n' "$LOG" "$owner"
+        printf '         Ubuntu runs rsyslog as the unprivileged `syslog` user, so\n'
+        printf '         fileOwner="root" cannot be honoured. Mode 0600 still confines\n'
+        printf '         the log to that account and root -- but that account CAN read\n'
+        printf '         it, unlike on Debian. See SECURITY.md, "File permissions".\n'
+        ;;
+    *) die "$LOG is owned by $owner; expected root:root, or syslog:syslog on Ubuntu" ;;
+esac
 printf '   %s %s\n' "$perms" "$owner"
 
 step "7. re-install over an existing install (idempotence)"
