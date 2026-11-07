@@ -34,7 +34,7 @@
 # ------------------------------------------------------------------ #
 
 __cmdscribe_bash_run() {
-    local _cs_rc=$? _cs_line _cs_cmd
+    local _cs_rc=$? _cs_line _cs_cmd _cs_trim _cs_num
 
     # Re-assert HISTCONTROL on every prompt, not just at install.
     #
@@ -64,19 +64,47 @@ __cmdscribe_bash_run() {
     # shellcheck disable=SC1007
     _cs_line=$(HISTTIMEFORMAT= history 1 2>/dev/null)
 
-    # Nothing to report: first prompt of a session with no prior history.
-    # Emitting here would write records with an empty command field.
+    # Split number from command text without a fork -- this runs after every
+    # command on every shell on every host it is installed on.
+    _cs_trim=${_cs_line#"${_cs_line%%[![:space:]]*}"}
+    _cs_num=${_cs_trim%%[!0-9]*}
+    case $_cs_num in ''|*[!0-9]*) _cs_num='' ;; esac
+
+    # Seed the baseline once, at the FIRST invocation, and emit nothing then.
+    #
+    # This is the reason the function looks like this. `history 1` at a
+    # session's first prompt is not necessarily something this session typed:
+    # bash loads HISTFILE before drawing the first prompt, so the last entry can
+    # belong to some earlier session entirely -- and emitting it writes a record
+    # carrying THIS session's pid, tty and timestamp for a command nobody here
+    # ran. CI caught exactly that: a session logged `exit`, which it cannot have
+    # run, because `exit` ends the shell before PROMPT_COMMAND fires.
+    # Manufacturing a record is worse than missing one. SECURITY.md, 7.
+    #
+    # Seeded here rather than at install because install runs inside
+    # /etc/profile.d, BEFORE bash has read HISTFILE -- measured, `history 1` is
+    # empty there -- so an install-time baseline is always 0 and suppresses
+    # nothing. An install-time baseline is what was tried first, and letting it
+    # be vacuous is what let the false record through.
+    if [ -z "${__CMDSCRIBE_HISTBASE+set}" ]; then
+        __CMDSCRIBE_HISTBASE=${_cs_num:-0}
+        return 0
+    fi
+
+    # Anything at or below the baseline predates anything this session typed.
+    if [ -n "$_cs_num" ] && [ "$_cs_num" -le "$__CMDSCRIBE_HISTBASE" ]; then
+        return 0
+    fi
+
+    # First prompt of a session with no prior history at all.
     [ -n "$_cs_line" ] || return 0
 
     _cs_cmd=$(printf '%s\n' "$_cs_line" \
               | sed -E -e 's/^[[:space:]]*[0-9]+[[:space:]]*//')
+    [ -n "$_cs_cmd" ] || return 0
 
-    # The line that sourced us is not something anyone typed to be audited.
-    # Matched by content, deliberately: an earlier revision also skipped any
-    # entry at or below the history number seen at install time, which sounds
-    # tighter but silently discarded real commands whenever history was short
-    # by one. A logger that drops records to avoid one cosmetic artefact has
-    # the trade backwards, so the artefact is handled here and nowhere else.
+    # Belt to the baseline's braces. The line that sourced us is never a
+    # command, whatever its history number claims.
     case "$_cs_cmd" in
         ". "*entry.bash*|"source "*entry.bash*) return 0 ;;
     esac

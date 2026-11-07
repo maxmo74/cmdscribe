@@ -152,3 +152,22 @@ person. If you need a support commitment, this is not that.
    widen it at will. The shell layer cannot close this by construction; the
    kernel layer sees the `execve` regardless, which is the honest argument for
    running both.
+7. **A bash session could previously record a command it never ran.** The hook
+   read the typed line with `history 1`, and at a session's first prompt that
+   can still be the last line loaded from `HISTFILE` — a command from some
+   *earlier* session — written out with this session's pid, tty and timestamp.
+   Observed directly in CI: a session recorded `exit`, which it cannot have
+   run, because `exit` ends the shell before `PROMPT_COMMAND` fires. A missing
+   record loses information; this one manufactured it.
+
+   Fixed by seeding a history-number baseline at the first prompt and emitting
+   nothing at it; entries at or below the baseline are not attributed to this
+   session. `ci/install-smoke.sh` step 3c is the regression test — it plants a
+   canary line in `HISTFILE` that the session never types and fails if that
+   canary ever appears in the session's records. Note the earlier attempt at
+   this seeded the baseline at *install* time, which is inside `/etc/profile.d`
+   and therefore before bash has read `HISTFILE`: always 0, suppressing nothing.
+   A fix that passes review and does nothing is still a fix that does nothing.
+8. zsh is not subject to 7 in the same way: `preexec` is event-driven rather
+   than a poll of `history`. If you are comparing the two shells, the bash
+   layer has the weaker claim about its own first record.

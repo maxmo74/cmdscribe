@@ -122,6 +122,29 @@ grep -q "IT_EARLY" "$LOG" \
     || die "IT_EARLY vanished: a command typed before the first prompt was discarded"
 printf '   early command recorded\n'
 
+step "3c. a previous session's command must never be attributed to this one"
+# SECURITY.md limitation 7. bash loads HISTFILE before drawing the first prompt,
+# so `history 1` can still be the last command of some EARLIER session. Emitting
+# it writes a record carrying this session's pid, tty and timestamp for a command
+# nobody in this session ran -- manufacturing a record, which is worse than
+# missing one. This was observed: a session logged `exit`, which it cannot have
+# run.
+#
+# The canary is a line this session never types. If it appears among the records
+# this session produced, the hook is laundering history.
+rm -rf /tmp/canary-home && mkdir -p /tmp/canary-home
+printf '%s\n' "echo CANARY_FROM_A_PREVIOUS_SESSION" > /tmp/canary-home/.bash_history
+n0=$(wc -l < "$LOG")
+HOME=/tmp/canary-home python3 tests/drive-pty.py bash system 30 /tmp/smoke-canary.log >/dev/null 2>&1
+sleep 2
+new=$(( $(wc -l < "$LOG") - n0 ))
+if tail -n "$new" "$LOG" | grep -q "CANARY_FROM_A_PREVIOUS_SESSION"; then
+    printf '   this session wrote %s records:\n' "$new"
+    tail -n "$new" "$LOG"
+    die "a previous session's command was recorded as though this session ran it"
+fi
+printf '   no laundered history; %s records, all typed here\n' "$new"
+
 step "4. capture through a real login shell (zsh)"
 python3 tests/drive-pty.py zsh system 30 /tmp/smoke-zsh.log >/dev/null 2>&1 \
     || die "drive-pty.py failed for zsh"
@@ -135,7 +158,11 @@ step "5. a newline in a command must not forge a second record"
 # a real newline and must appear as ONE line, collapsed.
 grep -q "$NL_MARK" "$LOG" || die "newline probe missing from log"
 nl_lines=$(grep -c "$NL_MARK" "$LOG")
-[ "$nl_lines" = 2 ] || die "newline probe produced $nl_lines records, expected 2 (bash+zsh)"
+# At least one per shell driven so far. Not an exact count: earlier steps open
+# additional sessions, and pinning a number here made this assertion break for
+# reasons that had nothing to do with injection. The property that matters is
+# checked immediately below and does not depend on counting.
+[ "$nl_lines" -ge 2 ] || die "newline probe produced $nl_lines records, expected >= 2"
 # The count above is the weak version. This is the actual property: the two
 # halves must share ONE line. A record carrying IT_NL1 without IT_NL2 means
 # the embedded newline split it, i.e. anyone who can type can author arbitrary
