@@ -16,6 +16,7 @@ set -eu
 
 [ "$(id -u)" -eq 0 ] || { echo "must run as root" >&2; exit 1; }
 
+
 # install.sh picks the prefix per platform, because macOS keeps /usr on the
 # sealed read-only volume. Hardcoding one path here made uninstall remove a
 # directory that did not exist, report "removed" anyway (rm -rf on a missing
@@ -29,18 +30,24 @@ STATE=/var/lib/cmdscribe
 _REMOVED_RULE=""
 MANIFEST=$STATE/installed.manifest
 _manual=0
-say() { printf 'cmdscribe: %s\n' "$1"; }
+# Read it before the runtime is removed, not after.
+VERSION=$(cat /usr/local/share/cmdscribe/VERSION /usr/share/cmdscribe/VERSION \
+         "$PWD/VERSION" 2>/dev/null | head -1 | tr -d '[:space:]')
+[ -n "$VERSION" ] || VERSION=unknown
+
+note() { printf 'cmdscribe: %s\n' "$1"; }
+note "uninstalling version $VERSION"
 
 if [ ! -f "$MANIFEST" ]; then
-    say "no manifest at $MANIFEST; removing runtime only"
-    say "if install.sh edited rc files, restore them from *.cmdscribe.bak by hand"
+    note "no manifest at $MANIFEST; removing runtime only"
+    note "if install.sh edited rc files, restore them from *.cmdscribe.bak by hand"
 else
     while read -r kind path; do
         [ -n "${path:-}" ] || continue
         case "$kind" in
             R)
                 if [ -e "$path" ]; then
-                    rm -f "$path" && say "removed $path"
+                    rm -f "$path" && note "removed $path"
                     case "$path" in
                         /etc/rsyslog.d/*) _REMOVED_RULE=1 ;;
                     esac
@@ -48,20 +55,20 @@ else
                 ;;
             B)
                 if [ -f "$path.cmdscribe.bak" ]; then
-                    mv -f "$path.cmdscribe.bak" "$path" && say "restored $path"
+                    mv -f "$path.cmdscribe.bak" "$path" && note "restored $path"
                 else
-                    say "WARNING: no backup for $path; leaving it alone"
-                    say "         look for a line reading: $ "
+                    note "WARNING: no backup for $path; leaving it alone"
+                    note "         look for a line reading: $ "
                 fi
                 ;;
             W)
-                say "WARNING: $path has a cmdscribe hook and no backup."
-                say "         Leaving it untouched. Remove it by hand:"
-                say "           grep -n -A1 '^# cmdscribe$' $path"
-                say "         then delete those two lines."
+                note "WARNING: $path has a cmdscribe hook and no backup."
+                note "         Leaving it untouched. Remove it by hand:"
+                note "           grep -n -A1 '^# cmdscribe$' $path"
+                note "         then delete those two lines."
                 _manual=1
                 ;;
-            *) say "ignoring unrecognised manifest entry: $kind $path" ;;
+            *) note "ignoring unrecognised manifest entry: $kind $path" ;;
         esac
     done < "$MANIFEST"
     rm -rf "$STATE"
@@ -69,7 +76,7 @@ fi
 
 for _p in $PREFIXES; do
     if [ -e "$_p" ]; then
-        rm -rf "$_p" && say "removed $_p"
+        rm -rf "$_p" && note "removed $_p"
     fi
 done
 
@@ -81,11 +88,11 @@ if [ "$(uname -s)" = Linux ] && [ -d /etc/rsyslog.d ] \
    && ! [ -f /etc/rsyslog.d/10-cmdscribe.conf ]; then
     if [ -n "${_REMOVED_RULE:-}" ]; then
         if command -v systemctl >/dev/null 2>&1 && systemctl restart rsyslog 2>/dev/null; then
-            say "restarted rsyslog"
+            note "restarted rsyslog"
         elif service rsyslog restart >/dev/null 2>&1; then
-            say "restarted rsyslog"
+            note "restarted rsyslog"
         else
-            say "NOTE: restart rsyslog yourself; it still holds the removed rule in memory"
+            note "NOTE: restart rsyslog yourself; it still holds the removed rule in memory"
         fi
     fi
 fi
@@ -98,14 +105,14 @@ _found=0
 for l in /var/log/cmdscribe.log; do
     if [ -e "$l" ]; then
         _n=$(wc -l < "$l" 2>/dev/null | tr -d " " || echo "?")
-        say "left $l in place ($_n records). It is evidence."
-        say "  delete it yourself if that is what you want: rm $l"
+        note "left $l in place ($_n records). It is evidence."
+        note "  delete it yourself if that is what you want: rm $l"
         _found=1
     fi
 done
-[ "$_found" = 1 ] || say "no log file found on this host"
+[ "$_found" = 1 ] || note "no log file found on this host"
 
-say "uninstall complete. A shell opened before this still has the hook loaded."
+note "uninstall complete. A shell opened before this still has the hook loaded."
 if [ "$_manual" = 1 ]; then
-    say "NOTE: at least one file was left hooked -- see the WARNING above."
+    note "NOTE: at least one file was left hooked -- see the WARNING above."
 fi

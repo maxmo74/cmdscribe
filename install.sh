@@ -24,6 +24,11 @@ set -eu
 STATE=/var/lib/cmdscribe
 MANIFEST=$STATE/installed.manifest
 SRC=$(cd "$(dirname "$0")" && pwd)
+
+# Single source of truth, shipped with the runtime so a running install can
+# be identified later. A version that exists only in a git tag is useless
+# for answering "which build is on this box" three months from now.
+VERSION=$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo unknown)
 MARK='# cmdscribe'
 WITH_AUDITD=0
 WITH_LOGFILE=0
@@ -48,7 +53,8 @@ case "$OS" in
     *)      PREFIX=/usr/share/cmdscribe ;;
 esac
 
-say() { printf 'cmdscribe: %s\n' "$1"; }
+note() { printf 'cmdscribe: %s\n' "$1"; }
+note "version $VERSION, installing on $OS"
 rec() { printf '%s %s\n' "$1" "$2" >> "$MANIFEST"; }
 
 # ---- 1. files ------------------------------------------------------ #
@@ -62,8 +68,9 @@ rm -rf "$PREFIX/lib" "$PREFIX/entry.bash" "$PREFIX/entry.zsh"
 cp -R "$SRC/lib"      "$PREFIX/lib"
 cp    "$SRC/entry.bash" "$PREFIX/entry.bash"
 cp    "$SRC/entry.zsh"  "$PREFIX/entry.zsh"
+cp    "$SRC/VERSION"    "$PREFIX/VERSION"
 chmod -R a+rX "$PREFIX"
-say "installed runtime to $PREFIX"
+note "installed runtime to $PREFIX"
 
 # ---- 2. shell hooks ------------------------------------------------ #
 # Optional env prefix for the hook line, so the shell that sources the
@@ -84,7 +91,7 @@ hook_into() {
         printf '%s\n%s\n' "$MARK" "$_hi_line" > "$_hi_f"
         chmod 0644 "$_hi_f"
         rec R "$_hi_f"
-        say "created $_hi_f"
+        note "created $_hi_f"
         return 0
     fi
 
@@ -99,17 +106,17 @@ hook_into() {
             # made a re-install+uninstall leave /etc/profile.d/zz-cmdscribe.sh
             # behind with its hook intact.
             rec R "$_hi_f"
-            say "hook already present in $_hi_f (ours; uninstall will remove it)"
+            note "hook already present in $_hi_f (ours; uninstall will remove it)"
         elif [ -f "$_hi_f.cmdscribe.bak" ]; then
             rec B "$_hi_f"
-            say "hook already present in $_hi_f (recorded for uninstall)"
+            note "hook already present in $_hi_f (recorded for uninstall)"
         else
             # No backup means the hook was not placed here by this
             # installer, or the backup was removed. There is nothing safe
             # to restore, so say so instead of pretending otherwise.
             rec W "$_hi_f"
-            say "WARNING: $_hi_f already contains a cmdscribe hook but has"
-            say "  no backup; uninstall will not be able to restore it"
+            note "WARNING: $_hi_f already contains a cmdscribe hook but has"
+            note "  no backup; uninstall will not be able to restore it"
         fi
         return 0
     fi
@@ -117,7 +124,7 @@ hook_into() {
     cp -p "$_hi_f" "$_hi_f.cmdscribe.bak"
     printf '\n%s\n%s\n' "$MARK" "$_hi_line" >> "$_hi_f"
     rec B "$_hi_f"
-    say "hooked $_hi_f"
+    note "hooked $_hi_f"
 }
 
 case "$OS" in
@@ -126,7 +133,7 @@ case "$OS" in
             hook_into /etc/profile.d/zz-cmdscribe.sh \
                       ". $PREFIX/entry.bash" create
         else
-            say "/etc/profile.d absent; hooking /etc/profile instead"
+            note "/etc/profile.d absent; hooking /etc/profile instead"
             hook_into /etc/profile ". $PREFIX/entry.bash"
         fi
 
@@ -153,19 +160,19 @@ case "$OS" in
                 install -o root -g admin -m 0660 /dev/null "$LOGFILE_PATH"
             fi
             LOGVAR="CMDSCRIBE_LOGFILE=$LOGFILE_PATH; "
-            say "also writing $LOGFILE_PATH (0660 root:admin)"
-            say "  WARNING: the shell appends this file itself, so anyone who"
-            say "  can type here can also truncate it. It is for eyeballing."
-            say "  The unified log remains the record of authority."
+            note "also writing $LOGFILE_PATH (0660 root:admin)"
+            note "  WARNING: the shell appends this file itself, so anyone who"
+            note "  can type here can also truncate it. It is for eyeballing."
+            note "  The unified log remains the record of authority."
         fi
         hook_into /etc/zshrc   "${LOGVAR}. $PREFIX/entry.zsh"
         hook_into /etc/bashrc  "${LOGVAR}. $PREFIX/entry.bash"
         hook_into /etc/profile "${LOGVAR}. $PREFIX/entry.bash"
         ;;
     *)
-        say "unsupported OS: $OS"
-        say "lib/os/bsd.sh should work on FreeBSD/OpenBSD/NetBSD -- same"
-        say "ps(1)-based attribution as macOS -- but no BSD has run it."
+        note "unsupported OS: $OS"
+        note "lib/os/bsd.sh should work on FreeBSD/OpenBSD/NetBSD -- same"
+        note "ps(1)-based attribution as macOS -- but no BSD has run it."
         ;;
 esac
 
@@ -173,9 +180,9 @@ esac
 case "$OS" in
     Linux)
         if [ "$WITH_LOGFILE" = 1 ]; then
-            say "--logfile ignored on Linux: rsyslog already writes"
-            say "$LOGFILE_PATH as root with 0600, which is strictly better"
-            say "than a file the typing user appends to themselves"
+            note "--logfile ignored on Linux: rsyslog already writes"
+            note "$LOGFILE_PATH as root with 0600, which is strictly better"
+            note "than a file the typing user appends to themselves"
         fi
         if [ -d /etc/rsyslog.d ]; then
             install -m 0644 -o root -g root \
@@ -189,20 +196,20 @@ case "$OS" in
                 # takes the host's whole logging down, not just cmdscribe.
                 if rsyslogd -N1 >/dev/null 2>&1; then
                     if command -v systemctl >/dev/null 2>&1; then
-                        systemctl restart rsyslog && say "restarted rsyslog"
+                        systemctl restart rsyslog && note "restarted rsyslog"
                     elif service rsyslog restart >/dev/null 2>&1; then
-                        say "restarted rsyslog"
+                        note "restarted rsyslog"
                     else
-                        say "could not restart rsyslog; rule needs a manual restart"
+                        note "could not restart rsyslog; rule needs a manual restart"
                     fi
                 else
                     rm -f /etc/rsyslog.d/10-cmdscribe.conf
-                    say "ERROR: rsyslog rejected the rule; removed it, nothing restarted"
+                    note "ERROR: rsyslog rejected the rule; removed it, nothing restarted"
                     rsyslogd -N1 2>&1 | tail -5 | sed 's/^/    /'
                     exit 1
                 fi
             else
-                say "rsyslog not present; records will go wherever logger sends them"
+                note "rsyslog not present; records will go wherever logger sends them"
             fi
         fi
         if [ -d /etc/logrotate.d ]; then
@@ -213,7 +220,7 @@ case "$OS" in
         fi
         ;;
     Darwin)
-        say "no rsyslog on macOS; records go to the unified log via logger(1)"
+        note "no rsyslog on macOS; records go to the unified log via logger(1)"
         # NOT 'process == "cmdscribe"'. logger(1) drops -t on macOS, so that
         # predicate matches nothing and looks like an idle machine. The
         # marker lives in the message body instead (see lib/os/darwin.sh).
@@ -223,10 +230,10 @@ case "$OS" in
         # where the same command without it returns 26. `--debug` works,
         # plain works, `--level debug` does not. `log stream` accepts it
         # but does not need it.
-        say "follow live with:  log stream --style compact \\"
-        say "                     --predicate 'eventMessage CONTAINS \"cmdscribe: login=\"'"
-        say "or after the fact: log show --last 1h \\"
-        say "                     --predicate 'eventMessage CONTAINS \"cmdscribe: login=\"'"
+        note "follow live with:  log stream --style compact \\"
+        note "                     --predicate 'eventMessage CONTAINS \"cmdscribe: login=\"'"
+        note "or after the fact: log show --last 1h \\"
+        note "                     --predicate 'eventMessage CONTAINS \"cmdscribe: login=\"'"
         # No rotation config is installed on macOS. platform/ holds one for
         # the BSDs only, because a rotation rule for a file nothing writes is
         # how a box ends up looking like it keeps logs when it keeps none.
@@ -239,16 +246,16 @@ if [ "$WITH_AUDITD" = 1 ] && [ "$OS" = Linux ] && command -v augenrules >/dev/nu
         "$SRC/platform/linux/cmdscribe.rules" /etc/audit/rules.d/cmdscribe.rules
     rec R /etc/audit/rules.d/cmdscribe.rules
     if augenrules --load; then
-        say "loaded auditd rules"
+        note "loaded auditd rules"
     else
-        say "augenrules --load failed; rules installed but not active"
+        note "augenrules --load failed; rules installed but not active"
     fi
-    say "check pam_loginuid or auid is worthless:"
-    say "  grep -l pam_loginuid /etc/pam.d/sshd /etc/pam.d/login"
+    note "check pam_loginuid or auid is worthless:"
+    note "  grep -l pam_loginuid /etc/pam.d/sshd /etc/pam.d/login"
 fi
 
-say "done."
+note "done."
 case "$OS" in
-    Darwin) say "open a NEW shell, run a command, then: log stream --style compact --predicate 'eventMessage CONTAINS \"cmdscribe: login=\"'" ;;
-    *)      say "open a NEW shell, run a command, then: sudo tail -f /var/log/cmdscribe.log" ;;
+    Darwin) note "open a NEW shell, run a command, then: log stream --style compact --predicate 'eventMessage CONTAINS \"cmdscribe: login=\"'" ;;
+    *)      note "open a NEW shell, run a command, then: sudo tail -f /var/log/cmdscribe.log" ;;
 esac

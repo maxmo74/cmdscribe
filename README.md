@@ -12,9 +12,10 @@ disagreement between them is the product.
 login=massimo actas=root pid=4127 ppid=4125 tty=pts/0 rc=1 :: ansible-vault view secrets.yml
 ```
 
-**Status: pre-1.0.** The shell layer is verified on Linux and macOS. The
-reconciliation tool — the actual differentiator — is a specification, not
-code. Read [SECURITY.md](SECURITY.md) before putting this on anything.
+**Version 0.0.1 — pre-1.0.** The shell layer is installed and verified on
+Linux and macOS. The reconciliation tool — the actual differentiator — is a
+specification, not code. Read [SECURITY.md](SECURITY.md) before putting this
+on anything.
 
 ---
 
@@ -233,9 +234,23 @@ exit.
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).
 
-Chosen so that a cloud vendor cannot take this, add a hosted dashboard,
-and ship it back as a closed product. The trade-off is honest and worth
-knowing before you adopt it: some enterprise open-source policies refuse
-GPL outright, more readily than they refuse GPL. For a tool whose whole
-purpose is being installed inside other people's servers, that is a real
-cost of the protection.
+Copyleft, because a hosted-auditing vendor taking this, bolting a dashboard
+onto it and shipping it closed is the obvious move, and you should be able to
+say no.
+
+GPL rather than AGPL, deliberately. AGPL's network clause is the only thing it
+adds over GPL, and it does not reach this software. cmdscribe can only record
+your commands by running on your machine, so anyone offering it to you has to
+hand you a copy — an agent, an image, a package — and that is distribution,
+which plain GPL already governs. cmdscribe structurally cannot be a back-end
+service nobody ships. AGPL would have been adoption friction in the one market
+that refuses it most often, bought for a loophole this cannot fall through.
+
+Version 3 rather than 2, for two reasons specific to a tool that records what
+an operator types. It grants patents explicitly, so a contributor cannot ship
+code and then assert over it. And its §6 installation-information requirement
+means someone embedding this in a locked appliance cannot leave the owner of
+that machine unable to replace the thing logging their commands.
+
+`-or-later`, so that moving to a future GPL version does not require tracking
+down every contributor.

@@ -40,6 +40,11 @@ TMO=
 if command -v timeout >/dev/null 2>&1; then TMO="timeout 90"
 elif command -v gtimeout >/dev/null 2>&1; then TMO="gtimeout 90"; fi
 
+# Naming note: rsh() shadows the real rsh(1) on systems that still ship it.
+# Harmless only because the definition precedes every use -- which is the
+# exact assumption that broke install.sh, where a helper named say() was
+# used before its definition and macOS happily ran /usr/bin/say and read the
+# install message out loud. Verify ordering, or pick a name nothing ships.
 # shellcheck disable=SC2086
 rsh()  { $TMO ssh $SSHO -n "$HOST" "$@" < /dev/null; }
 
