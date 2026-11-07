@@ -102,14 +102,13 @@ fi
 # platform, whatever the manifest says -- install.sh does not record it as
 # removable in the first place, and this is the second line of defence.
 _found=0
-for l in /var/log/cmdscribe.log; do
-    if [ -e "$l" ]; then
-        _n=$(wc -l < "$l" 2>/dev/null | tr -d " " || echo "?")
-        note "left $l in place ($_n records). It is evidence."
-        note "  delete it yourself if that is what you want: rm $l"
-        _found=1
-    fi
-done
+l=/var/log/cmdscribe.log
+if [ -e "$l" ]; then
+    _n=$(wc -l < "$l" 2>/dev/null | tr -d " " || echo "?")
+    note "left $l in place ($_n records). It is evidence."
+    note "  delete it yourself if that is what you want: rm $l"
+    _found=1
+fi
 [ "$_found" = 1 ] || note "no log file found on this host"
 
 note "uninstall complete. A shell opened before this still has the hook loaded."

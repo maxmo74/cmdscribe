@@ -1,0 +1,146 @@
+name: ci
+
+# Copyright (C) 2026 Massimo Santoro <massimosantoro@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # Parse-only, no dependencies beyond zsh and python3. Cheapest job, so it
+  # runs first and tells you whether anything else is worth starting.
+  syntax:
+    name: syntax and licence headers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zsh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zsh
+      - name: make syntax
+        run: make syntax
+
+  # The acceptance matrix. Drives real ptys so PROMPT_COMMAND and preexec
+  # actually fire, then asserts on the records produced.
+  #
+  # bash 3.2 on macOS is not a legacy courtesy: it is the /bin/bash every Mac
+  # has, and Apple is not updating it. That is why macos-latest is not optional.
+  matrix:
+    name: acceptance matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      # Every shell named here must be present AND actually driven. Without
+      # this a runner that lost zsh would report green having tested one
+      # shell, which is how a cross-platform claim quietly stops being true.
+      REQUIRE_SHELLS: bash zsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zsh (runner images are not something to assume about)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zsh
+      - name: What is actually being tested
+        run: |
+          printf 'os:  %s\n' "$(uname -srm)"
+          for s in bash zsh; do
+            if command -v "$s" >/dev/null 2>&1; then
+              printf '%s: %s\n' "$s" "$("$s" --version 2>&1 | head -1)"
+            else
+              printf '%s: MISSING\n' "$s"
+            fi
+          done
+      - name: make check
+        run: make check
+      # Only runs when the job already failed, to answer "did the runner
+      # actually have the shells the matrix claims to have tested?" Uses POSIX
+      # `type` rather than `type -a` so it works under the runner default shell
+      # on both Linux and macOS.
+      - name: What the runner had
+        if: failure()
+        run: |
+          printf 'PATH=%s\n' "$PATH"
+          for s in bash zsh; do
+            if type "$s" >/dev/null 2>&1; then
+              printf '%s -> %s\n' "$s" "$(command -v "$s")"
+            else
+              printf '%s -> not on PATH\n' "$s"
+            fi
+          done
+          ls -la /etc/profile.d || echo "/etc/profile.d absent (expected on macOS)"
+
+  # Static analysis. Linux only: shellcheck is a single static binary there
+  # and a slow brew bottle on macOS, and lint findings are not platform
+  # specific, so running it twice buys nothing.
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+      - name: shellcheck --version
+        run: shellcheck --version
+      - name: make lint
+        run: make lint
+
+  # The job that would have caught the say() bug.
+  #
+  # tests/pty-matrix.sh sources entry.bash directly and never runs install.sh,
+  # so an installer that dies on Linux -- as it did, on every Linux host, for
+  # one release -- passes the matrix. This runs the real installer as root on
+  # a real distro, captures through a real login shell, and checks the two
+  # properties that make this an auditing tool: the log is not readable by the
+  # people it records, and uninstalling does not delete what was recorded.
+  install-smoke:
+    name: install / capture / uninstall on Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pieces the installer expects to find
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zsh rsyslog
+          sudo systemctl start rsyslog || true
+          if sudo systemctl is-active --quiet rsyslog; then
+            echo "rsyslog active"
+          else
+            echo "rsyslog not active; install.sh restarts it and step 2 validates the config"
+          fi
+      - name: Confirm a clean starting state
+        run: |
+          test ! -e /var/log/cmdscribe.log || { echo "log already present"; exit 1; }
+          test ! -e /etc/rsyslog.d/10-cmdscribe.conf || { echo "rule already present"; exit 1; }
+          echo "clean"
+      - name: sudo ci/install-smoke.sh
+        run: sudo -E env "PATH=$PATH" ./ci/install-smoke.sh
+      - name: Upload transcripts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-smoke-transcripts
+          path: /tmp/smoke-*.log
+          if-no-files-found: ignore
+          retention-days: 7

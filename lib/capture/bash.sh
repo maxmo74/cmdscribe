@@ -39,6 +39,12 @@ __cmdscribe_bash_run() {
         return 0
     fi
 
+    # SC1007: the space after `=` is deliberate. HISTTIMEFORMAT must be
+    # empty for this one `history` call; `HISTTIMEFORMAT=history 1` would
+    # instead assign the string "history". `history` is a plain builtin so
+    # bash scopes the assignment to the call anyway, and the command
+    # substitution is a subshell, so it cannot leak even where it would.
+    # shellcheck disable=SC1007
     _cs_line=$(HISTTIMEFORMAT= history 1 2>/dev/null)
     _cs_cmd=$(printf '%s\n' "$_cs_line" \
               | sed -E -e 's/^[[:space:]]*[0-9]+[[:space:]]*//')

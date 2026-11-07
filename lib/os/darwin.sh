@@ -19,6 +19,9 @@
 # macOS 27.2 -- `log show --predicate 'process == "cmdscribe"'` returns
 # nothing at all, which reads as "no commands were run" rather than "your
 # query is wrong". Carrying the marker in the message body is the fix.
+# shellcheck disable=SC2034
+# Consumed by lib/emit.sh, which sources this file. shellcheck analyses
+# one file at a time and cannot see the reader, so it calls this unused.
 CMDSCRIBE_MSG_PREFIX="cmdscribe: "
 
 cmdscribe_origin() {

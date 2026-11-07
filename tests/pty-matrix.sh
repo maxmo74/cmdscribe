@@ -122,9 +122,40 @@ printf 'cmdscribe acceptance matrix\n'
 printf '(builtin capture, log-injection and sudo/su attribution are\n'
 printf ' covered by tests/integration.sh, which needs a target host)\n\n'
 
-command -v bash >/dev/null && drive bash "$HERE/entry.bash"
-echo
-command -v zsh  >/dev/null && drive zsh  "$HERE/entry.zsh"
+# A CI runner that is missing a shell must not go green having tested one.
+# Skipping is right for a developer laptop and wrong for a gate, so the
+# requirement is explicit: every name in REQUIRE_SHELLS has to be present
+# AND actually driven. Default stays narrow because plenty of correct dev
+# boxes have bash and nothing else.
+REQUIRE_SHELLS=${REQUIRE_SHELLS:-bash}
+
+for sh_name in $REQUIRE_SHELLS; do
+    command -v "$sh_name" >/dev/null || {
+        printf 'REQUIRED SHELL NOT INSTALLED: %s\n' "$sh_name" >&2
+        printf '  this gate requires: %s\n' "$REQUIRE_SHELLS" >&2
+        exit 1
+    }
+done
+
+DRIVEN=""
+for sh_name in bash zsh; do
+    command -v "$sh_name" >/dev/null || {
+        printf 'skipping %s: not installed\n' "$sh_name"
+        continue
+    }
+    printf 'driving %s: %s\n' "$sh_name" "$("$sh_name" --version 2>/dev/null | head -1)"
+    drive "$sh_name" "$HERE/entry.$sh_name"
+    DRIVEN="$DRIVEN $sh_name"
+    echo
+done
+
+for req in $REQUIRE_SHELLS; do
+    case " $DRIVEN " in
+        *" $req "*) ;;
+        *) printf 'REQUIRED SHELL NEVER DRIVEN: %s\n' "$req" >&2
+           fail=$((fail + 1)) ;;
+    esac
+done
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

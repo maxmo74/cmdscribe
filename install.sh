@@ -52,6 +52,10 @@ case "$OS" in
     Darwin) PREFIX=/usr/local/share/cmdscribe ;;
     *)      PREFIX=/usr/share/cmdscribe ;;
 esac
+# Every path below hangs off PREFIX, including an rm -rf. `set -u` catches an
+# unset variable but not an empty one, and an empty PREFIX would turn
+# "$PREFIX/lib" into /lib. Refuse loudly instead of finding out later.
+: "${PREFIX:?PREFIX is empty; refusing to continue}"
 
 note() { printf 'cmdscribe: %s\n' "$1"; }
 note "version $VERSION, installing on $OS"
@@ -64,7 +68,7 @@ mkdir -p "$STATE" "$PREFIX"
 : > "$MANIFEST"
 
 # Deterministic: drop the old runtime so a removed file cannot linger.
-rm -rf "$PREFIX/lib" "$PREFIX/entry.bash" "$PREFIX/entry.zsh"
+rm -rf "${PREFIX:?}/lib" "${PREFIX:?}/entry.bash" "${PREFIX:?}/entry.zsh"
 cp -R "$SRC/lib"      "$PREFIX/lib"
 cp    "$SRC/entry.bash" "$PREFIX/entry.bash"
 cp    "$SRC/entry.zsh"  "$PREFIX/entry.zsh"

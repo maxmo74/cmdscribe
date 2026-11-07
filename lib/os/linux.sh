@@ -11,6 +11,9 @@
 # Empty on purpose: rsyslog already writes the tag into the line via
 # %syslogtag%, so the rendered record contains "cmdscribe: login=" with no
 # help from us. Adding a prefix here would double it.
+# shellcheck disable=SC2034
+# Consumed by lib/emit.sh, which sources this file. shellcheck analyses
+# one file at a time and cannot see the reader, so it calls this unused.
 CMDSCRIBE_MSG_PREFIX=""
 
 # Best-effort recovery of who ORIGINALLY logged in, even across

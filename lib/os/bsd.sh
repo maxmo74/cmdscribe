@@ -18,6 +18,9 @@
 # it and needs the prefix; Linux does not. Left empty so a BSD that
 # behaves like Linux gets it right, but verify which you have before
 # trusting a search for "cmdscribe: login=".
+# shellcheck disable=SC2034
+# Consumed by lib/emit.sh, which sources this file. shellcheck analyses
+# one file at a time and cannot see the reader, so it calls this unused.
 CMDSCRIBE_MSG_PREFIX=""
 
 cmdscribe_origin() {

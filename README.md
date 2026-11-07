@@ -1,5 +1,8 @@
 # Command Scribe (`cmdscribe`)
 
+[![ci](https://github.com/maxmo74/cmdscribe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maxmo74/cmdscribe/actions/workflows/ci.yml)
+![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue) ![platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS-informational)
+
 Self-verifying command auditing for Unix shells.
 
 Two independent capture layers record what was run and by whom, and
@@ -83,8 +86,26 @@ installs to `/usr/local/share/cmdscribe` there, and the entry files now
 locate themselves from their own path instead of trusting a hardcoded
 default.
 
-`make check` runs the acceptance matrix against whatever shells are
-installed locally. `tests/integration.sh` runs against a real host over
+Three make targets, all of which run in CI:
+
+| target | what it proves | needs |
+|---|---|---|
+| `make check` | behaviour, through real ptys | bash, zsh, python3 |
+| `make syntax` | every file parses, shebangs and mode bits are right, licence headers present, no CRLF | sh, bash, zsh, python3 |
+| `make lint` | `shellcheck --severity=warning` over every `.sh`/`.bash` | shellcheck |
+
+`make check` skips a shell that is not installed, which is right for a laptop
+and wrong for a gate. Set `REQUIRE_SHELLS="bash zsh"` and a missing shell fails
+the run instead of quietly shrinking it; CI always sets it.
+
+CI runs four jobs: the matrix on `ubuntu-latest` and `macos-latest`, syntax, shellcheck, and `ci/install-smoke.sh` — which runs the real installer as root on a real distro, captures through a real login shell, then uninstalls and checks the log survived. That last job exists because the matrix sources `entry.bash` directly and never executes `install.sh`; a version of the installer that aborted on every Linux host passed the full matrix.
+
+`shellcheck` has no zsh front end — `shellcheck -s zsh` is "Unknown shell",
+exit 4 — so the `.zsh` files are checked for parsing by `make syntax` and for
+behaviour by the matrix, not by static analysis. That is a real gap, not a
+covered one.
+
+`tests/integration.sh` runs against a real host over
 ssh and skips shells that are not installed rather than reporting them as
 failures.
 
