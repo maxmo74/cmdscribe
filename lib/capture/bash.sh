@@ -27,17 +27,14 @@
 #  * sed needs -E: BSD sed silently ignores GNU '\+' and would leave the
 #    history number in every record.
 #  * Sourcing this file from an interactive login shell pushes its own
-#    lines into history, so the first prompt reports a line of this
-#    file rather than a typed command. Exactly one invocation is dropped.
+#    lines into history, so the first prompt can report a line of this
+#    file rather than a typed command. Suppressed by a history-number
+#    baseline (see __CMDSCRIBE_HISTBASE), NOT by dropping "the first
+#    invocation".
 # ------------------------------------------------------------------ #
 
 __cmdscribe_bash_run() {
-    local _cs_rc=$? _cs_line _cs_cmd
-
-    if [ -z "$__CMDSCRIBE_ARMED" ]; then
-        __CMDSCRIBE_ARMED=1
-        return 0
-    fi
+    local _cs_rc=$? _cs_line _cs_cmd _cs_trim _cs_num
 
     # SC1007: the space after `=` is deliberate. HISTTIMEFORMAT must be
     # empty for this one `history` call; `HISTTIMEFORMAT=history 1` would
@@ -46,8 +43,33 @@ __cmdscribe_bash_run() {
     # substitution is a subshell, so it cannot leak even where it would.
     # shellcheck disable=SC1007
     _cs_line=$(HISTTIMEFORMAT= history 1 2>/dev/null)
+
+    # Nothing to report: first prompt of a session with no prior history.
+    # Emitting here would write records with an empty command field.
+    [ -n "$_cs_line" ] || return 0
+
     _cs_cmd=$(printf '%s\n' "$_cs_line" \
               | sed -E -e 's/^[[:space:]]*[0-9]+[[:space:]]*//')
+
+    # The line that sourced us is not something anyone typed to be audited.
+    # Match it by content so this works even when the baseline is unavailable.
+    case "$_cs_cmd" in
+        ". "*entry.bash*|"source "*entry.bash*) return 0 ;;
+    esac
+
+    # And by position: anything at or below the history number observed when
+    # the hook went in predates the hook, so the hook cannot vouch for it.
+    # Parsed with parameter expansion rather than another sed, because this
+    # function runs after every single command and a fork per command is a
+    # regression you pay for forever.
+    if [ -n "$__CMDSCRIBE_HISTBASE" ]; then
+        _cs_trim=${_cs_line#"${_cs_line%%[![:space:]]*}"}
+        _cs_num=${_cs_trim%%[!0-9]*}
+        case $_cs_num in
+            ''|*[!0-9]*) ;;                       # unparseable: emit anyway
+            *) [ "$_cs_num" -le "$__CMDSCRIBE_HISTBASE" ] && return 0 ;;
+        esac
+    fi
 
     cmdscribe_emit "$_cs_cmd" "$_cs_rc"
 }
@@ -69,6 +91,26 @@ __cmdscribe_bash_install() {
 
     unset HISTIGNORE
     export HISTCONTROL=ignoredups
+
+    # Where history stands right now. Everything at or below this number was
+    # already in the list before the hook existed, so it is either the line
+    # that sourced us or a previous session's last command -- neither is
+    # something this hook can vouch for.
+    #
+    # This replaces an earlier `__CMDSCRIBE_ARMED` flag that discarded the
+    # first PROMPT_COMMAND invocation outright. That was a guess dressed up as
+    # a rule: it is correct only when the first invocation happens to land on
+    # the sourcing artifact. CI found a host where the first invocation landed
+    # on a real command instead -- a login shell that read buffered input
+    # before drawing its first prompt -- and the hook silently threw that
+    # command away. In an auditing tool, "sometimes we drop a command and do
+    # not say so" is the worst defect available, and SECURITY.md limitation 6
+    # describes how to widen that window deliberately. Compare numbers instead
+    # of counting invocations: nothing typed is ever discarded, and nothing
+    # untyped is ever attributed.
+    # shellcheck disable=SC1007  # same deliberate empty HISTTIMEFORMAT as above
+    __CMDSCRIBE_HISTBASE=$(HISTTIMEFORMAT= history 1 2>/dev/null \
+                           | sed -E -e 's/^[[:space:]]*([0-9]+).*/\1/')
 
     export PROMPT_COMMAND=__cmdscribe_bash_run
 }

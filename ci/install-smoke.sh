@@ -82,6 +82,35 @@ sleep 2
 grep -q "$MARK" "$LOG" || { tail -5 "$LOG"; die "probe command not recorded by bash"; }
 printf '   bash recorded: %s\n' "$(grep -m1 "$MARK" "$LOG" | sed 's/.*:: //')"
 
+step "3b. a command typed before the first prompt is still recorded"
+# Regression test for a real silent-loss defect. The hook used to discard its
+# first PROMPT_COMMAND invocation to suppress the line that sourced it, which
+# threw away a genuine command whenever the two coincided -- and they coincide
+# when input is already buffered and bash executes it before drawing a prompt.
+# This writes the command the instant the pty exists, with no wait at all.
+python3 - <<'PY' || die "type-ahead probe could not run"
+import os, pty, select, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("bash", ["bash", "-l"])
+os.write(fd, b"echo IT_EARLY\n")          # no wait: worst case on purpose
+end = time.time() + 8
+while time.time() < end:
+    r, _, _ = select.select([fd], [], [], 0.2)
+    if r:
+        try:
+            if not os.read(fd, 4096):
+                break
+        except OSError:
+            break
+os.write(fd, b"exit\n")
+time.sleep(0.5)
+PY
+sleep 2
+grep -q "IT_EARLY" "$LOG" \
+    || die "IT_EARLY vanished: a command typed before the first prompt was discarded"
+printf '   early command recorded\n'
+
 step "4. capture through a real login shell (zsh)"
 python3 tests/drive-pty.py zsh system 30 /tmp/smoke-zsh.log >/dev/null 2>&1 \
     || die "drive-pty.py failed for zsh"
