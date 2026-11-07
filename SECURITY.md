@@ -98,9 +98,9 @@ person. If you need a support commitment, this is not that.
    "self-verifying" claim is aspirational. Do not cite this project as
    evidence of coverage until that tool ships.
 2. `lib/os/bsd.sh` is **untested**. No BSD has been used to run it.
-3. zsh on Linux is **unverified** — the pieces are each verified
-   separately (`capture/zsh.zsh` on macOS, `os/linux.sh` via bash on
-   Linux), but the combination has not been run.
+3. Attribution through `sudo su -` is **verified by hand, not by the
+   automated suite**. `capture/zsh.zsh` and `capture/bash.sh` are each
+   verified on Linux and macOS; `os/bsd.sh` is verified on nothing.
 4. On macOS there is **no tamper-resistant second layer**. Apple's
    EndpointSecurity API requires an entitlement granted only to approved
    organisations. macOS cmdscribe is single-layer and therefore weaker

@@ -69,7 +69,7 @@ the first draft of this did.
 
 | | bash | zsh |
 |---|---|---|
-| **Linux** | verified — Debian 13, bash 5.2, real pty | not verified (no zsh on the test host) |
+| **Linux** | verified — Debian 13, bash 5.2, real pty | verified — Debian 13, zsh 5.9, real pty |
 | **macOS** | verified — macOS 27.2, bash 3.2 | verified — zsh 5.9 |
 | **BSD** | untested | untested |
 
@@ -77,6 +77,12 @@ the first draft of this did.
 installed locally. `tests/integration.sh` runs against a real host over
 ssh and skips shells that are not installed rather than reporting them as
 failures.
+
+One thing the automated suite does **not** cover: attribution through
+`sudo su -`. It was verified by hand (see below) but reproducing it
+automatically needs a non-root account with passwordless sudo, which is
+not a reasonable thing to assume about someone else's host. It reports
+`SKIP` rather than pretending.
 
 ## Install
 

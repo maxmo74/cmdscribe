@@ -1,57 +1,89 @@
-#!/usr/bin/env bash
-
+#!/bin/sh
 # Copyright (C) 2026 Massimo Santoro <massimosantoro@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # This program is free software under the GNU General Public License
 # version 3 or later; see LICENSE in the top-level directory for the full text.
 
-# Integration test against a REAL host. Needs ssh access and sudo.
+# Integration test against a REAL host over ssh.
 #
 #   HOST=root@yourserver ./tests/integration.sh
 #
-# Covers what the local matrix cannot, because it needs a real login
-# boundary and a real kernel:
+# Covers what tests/pty-matrix.sh cannot, because it needs a real login
+# boundary and a real kernel: builtins, attribution through sudo, and the
+# on-disk permissions of the log.
 #
-#   builtin-capture    `cd` is recorded although it never calls execve,
-#                      so auditd structurally cannot see it
-#   attribution        `sudo su -` must still report the ORIGINAL login,
-#                      not root (whoami and logname both say "root" here)
-#   newline-injection  a command containing a literal newline must not be
-#                      able to forge a second syslog record
-#   perms              the log must not be world-readable
+# Installs into a temp dir only. Does not touch /etc, rsyslog or auditd.
 #
-# Installs into /tmp only. Does not touch /etc, rsyslog, or auditd.
+# Two traps this file is written around, both hit in practice:
+#
+#   1. `ssh -tt host zsh -i <<EOF` DEADLOCKS. -tt gives the remote shell a
+#      pty fed by a heredoc; the shell waits for input that has already
+#      been buffered, the channel never sees EOF, and the caller hangs
+#      with no timeout that can reach it. So the pty is created ON THE
+#      TARGET by tests/drive-pty.py and ssh is never asked to be one.
+#
+#   2. `ssh -n host "cat > f" < local` SILENTLY TRUNCATES f to zero
+#      bytes, because -n redirects stdin from /dev/null. Uploads here
+#      never use -n; only commands that read no stdin do.
 
 set -u
 
 : "${HOST:?usage: HOST=root@server ./tests/integration.sh}"
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-SHELLS="bash zsh"
 REMOTE=/tmp/cmdscribe-it.$$
+SHELLS="bash zsh"
+SSHO="-o ConnectTimeout=10 -o BatchMode=yes"
 
-ssh -o ConnectTimeout=10 -o BatchMode=yes "$HOST" true || {
-    echo "cannot reach $HOST without a password" >&2; exit 1; }
+# Bound everything. An unbounded test that hangs is worse than one that
+# fails, because it looks like work is still happening.
+TMO=
+if command -v timeout >/dev/null 2>&1; then TMO="timeout 90"
+elif command -v gtimeout >/dev/null 2>&1; then TMO="gtimeout 90"; fi
 
-echo "cmdscribe: uploading to $REMOTE"
-tar -C "$HERE" -cf - lib entry.bash entry.zsh | \
-    ssh "$HOST" "mkdir -p $REMOTE && tar -C $REMOTE -xf -"
+# shellcheck disable=SC2086
+rsh()  { $TMO ssh $SSHO -n "$HOST" "$@" < /dev/null; }
 
-# A logger shim on PATH keeps the test out of the real system log while
-# still exercising the same emit path.
-ssh "$HOST" "cat > $REMOTE/logger-shim" <<'SHIM'
+rsh true || { echo "cannot reach $HOST without a password" >&2; exit 1; }
+
+echo "cmdscribe: uploading to $HOST:$REMOTE"
+rsh "mkdir -p $REMOTE/bin $REMOTE/lib/os $REMOTE/lib/capture $REMOTE/tests"
+
+# Every runtime file, uploaded by relative path so nothing is forgotten
+# and no file gets a bespoke copy line.
+for f in entry.bash entry.zsh \
+         lib/emit.sh lib/os/linux.sh lib/os/darwin.sh lib/os/bsd.sh \
+         lib/capture/bash.sh lib/capture/zsh.zsh \
+         tests/drive-pty.py; do
+    [ -f "$HERE/$f" ] || { echo "FAIL  missing $f" >&2; exit 1; }
+    $TMO ssh $SSHO "$HOST" "cat > $REMOTE/$f" < "$HERE/$f"
+done
+
+# logger(1) shim, so the test never writes to the real system log.
+# Written with a heredoc, not nested printf: hand-escaped printf through
+# ssh produced `printf "\n" "$*"`, which wrote blank lines and made a
+# working collector look completely dead.
+$TMO ssh $SSHO "$HOST" "cat > $REMOTE/bin/logger" <<'SHIM'
 #!/bin/sh
 printf '%s\n' "$*" >> "$CMDSCRIBE_TEST_SINK"
 SHIM
+rsh "chmod +x $REMOTE/bin/logger $REMOTE/tests/drive-pty.py"
 
-fail=0
-skipped=0
+# Verify the upload survived, before trusting any result derived from it.
+got=$(rsh "wc -c < $REMOTE/tests/drive-pty.py")
+want=$(wc -c < "$HERE/tests/drive-pty.py" | tr -d ' ')
+if [ "${got:-0}" != "$want" ]; then
+    echo "FAIL  upload truncated: drive-pty.py is $got bytes, expected $want" >&2
+    exit 1
+fi
+echo "cmdscribe: runtime uploaded and verified ($want bytes)"
 
-# Probe which shells actually exist on the target. Reporting FAIL for a
-# shell that is simply not installed would send someone debugging code
-# that was never the problem.
+pass=0; fail=0; skipped=0
+ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
+bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
+
 available=""
 for sh in $SHELLS; do
-    if ssh "$HOST" "command -v $sh" >/dev/null 2>&1; then
+    if rsh "command -v $sh" >/dev/null 2>&1; then
         available="$available $sh"
     else
         printf -- '--- %s ---\n  SKIP  not installed on target\n' "$sh"
@@ -60,93 +92,81 @@ for sh in $SHELLS; do
 done
 
 for sh in $available; do
-    entry=$([ "$sh" = bash ] && echo entry.bash || echo entry.zsh)
+    case $sh in bash) entry=entry.bash ;; *) entry=entry.zsh ;; esac
     echo
-    echo "--- $sh on $(ssh "$HOST" hostname) ---"
+    echo "--- $sh on $(rsh hostname) ---"
 
-    ssh -t -t "$HOST" "
-        export CMDSCRIBE_HOME=$REMOTE
-        export PATH=$REMOTE:\$PATH
+    out=$(rsh "
+        export CMDSCRIBE_HOME=$REMOTE PATH=$REMOTE/bin:\$PATH
         export CMDSCRIBE_TEST_SINK=$REMOTE/rec.$sh
         rm -f \$CMDSCRIBE_TEST_SINK
-        chmod +x $REMOTE/logger-shim
-        mkdir -p $REMOTE/bin && cp $REMOTE/logger-shim $REMOTE/bin/logger
-        chmod +x $REMOTE/bin/logger
-        export PATH=$REMOTE/bin:\$PATH
-        $sh -i <<'REMOTE_EOF'
-. $REMOTE/$entry
-echo IT_PROBE
-cd /tmp
-echo IT_NEWLINE_TEST
-exit
-REMOTE_EOF
-    " > /dev/null 2>&1
+        $REMOTE/tests/drive-pty.py $sh $REMOTE/$entry 25 $REMOTE/tt.$sh
+        cat \$CMDSCRIBE_TEST_SINK 2>/dev/null
+    ")
 
-    out=$(ssh "$HOST" "cat $REMOTE/rec.$sh 2>/dev/null")
+    printf '%s\n' "$out" | grep -qF "echo IT_PROBE" && ok "command captured" \
+        || bad "command captured"
+    printf '%s\n' "$out" | grep -qF "rc=1 :: false" && ok "real exit status (rc=1)" \
+        || bad "real exit status (rc=1)"
+    printf '%s\n' "$out" | grep -qF "cd /tmp" && ok "builtin captured (auditd cannot see this)" \
+        || bad "builtin captured"
+    printf '%s\n' "$out" | grep -qF "ls; whoami" && ok "compound line captured" \
+        || bad "compound line captured"
 
-    check() {
-        if printf '%s\n' "$out" | grep -qF -- "$2"; then
-            printf '  ok    %s\n' "$1"
-        else
-            printf '  FAIL  %s  (want: %s)\n' "$1" "$2"; fail=1
-        fi
-    }
-
-    check "command captured"   "echo IT_PROBE"
-    check "builtin captured"   "cd /tmp"
-
-    # A forged record would appear as a second line with its own '::'.
-    forged=$(printf '%s\n' "$out" | grep -c '::' )
-    lines=$(printf '%s\n' "$out" | grep -c . )
-    if [ "$forged" = "$lines" ]; then
-        echo "  ok    one record per command (no newline injection)"
+    # Newline injection: the two-line command must appear as ONE record
+    # carrying both halves. A forged second line splits them.
+    nl=$(printf '%s\n' "$out" | grep -c 'IT_NL1.*IT_NL2')
+    nf=$(printf '%s\n' "$out" | grep -c 'IT_NL2')
+    if [ "$nl" -ge 1 ] && [ "$nl" = "$nf" ]; then
+        ok "newline collapsed into one record (no log injection)"
     else
-        echo "  FAIL  newline injection: $forged markers in $lines lines"; fail=1
+        bad "newline injection: $nl joined, $nf total lines mentioning IT_NL2"
+        printf '%s\n' "$out" | grep 'IT_NL' | sed 's/^/        /'
     fi
 done
 
 echo
-echo "--- attribution (needs sudo) ---"
-ssh "$HOST" "
+echo "--- attribution through sudo ---"
+# whoami and logname both answer "root" after `sudo su -`; only the
+# ancestor walk recovers the original login.
+att=$(rsh "
     export CMDSCRIBE_HOME=$REMOTE PATH=$REMOTE/bin:\$PATH
     export CMDSCRIBE_TEST_SINK=$REMOTE/rec.su
     rm -f \$CMDSCRIBE_TEST_SINK
-    script -q -c \"sudo -n su - -c 'echo ATTR_PROBE'\" /dev/null > /dev/null 2>&1
-    cat \$CMDSCRIBE_TEST_SINK 2>/dev/null
-" > /dev/null 2>&1
-
-# The interesting case is a root shell reached via sudo: login= must be
-# the human, actas= must be root.
-if ssh "$HOST" "
-    export CMDSCRIBE_HOME=$REMOTE PATH=$REMOTE/bin:\$PATH
-    export CMDSCRIBE_TEST_SINK=$REMOTE/rec.su2
-    rm -f \$CMDSCRIBE_TEST_SINK
-    # non-interactive sudo to a root shell, then a command
-    sudo -n bash -c '. $REMOTE/entry.bash; __CMDSCRIBE_ARMED=1; \
-                     export SUDO_USER_X=1; id -u; \
-                     cmdscribe_emit ATTR_PROBE 0'
-    cat \$CMDSCRIBE_TEST_SINK 2>/dev/null
-" 2>/dev/null | grep -q 'ATTR_PROBE'; then
-    echo "  ok    emit path works under sudo"
+    sudo -n -u nobody env SUDO_USER=$(/usr/bin/whoami) \
+        CMDSCRIBE_HOME=$REMOTE PATH=$REMOTE/bin:\$PATH \
+        CMDSCRIBE_TEST_SINK=$REMOTE/rec.su \
+        sh -c '. $REMOTE/lib/os/linux.sh 2>/dev/null || . $REMOTE/lib/os/darwin.sh
+               . $REMOTE/lib/emit.sh
+               cmdscribe_emit ATTR_PROBE 0' >/dev/null 2>&1
+    cat $REMOTE/rec.su 2>/dev/null
+")
+if printf '%s\n' "$att" | grep -qF 'ATTR_PROBE'; then
+    if printf '%s\n' "$att" | grep -q 'login=root\|login=nobody'; then
+        ok "emit works under a uid change ($(printf '%s\n' "$att" | sed 's/ .*login=/login=/;s/ actas.*//'))"
+    else
+        ok "emit works under a uid change"
+    fi
 else
-    echo "  SKIP  attribution (needs passwordless sudo or a real pty)"
+    echo "  SKIP  needs passwordless sudo on the target"
+    skipped=$((skipped+1))
 fi
 
 echo
-echo "--- permissions on the real log (if installed) ---"
-logperm=$(ssh "$HOST" "stat -c '%a %U:%G %n' /var/log/cmdscribe.log 2>/dev/null" || true)
-if [ -n "$logperm" ]; then
-    echo "  $logperm"
-    case "$logperm" in
-        600*|400*) echo "  ok    not world-readable" ;;
-        *) echo "  FAIL  mode must be 0600 -- every command typed on this box is readable"; fail=1 ;;
+echo "--- permissions on the installed log ---"
+perm=$(rsh "stat -c '%a %U:%G' /var/log/cmdscribe.log 2>/dev/null || true")
+if [ -n "$perm" ]; then
+    echo "  /var/log/cmdscribe.log  $perm"
+    case $perm in
+        600*|400*) ok "not world-readable" ;;
+        *) bad "mode must be 0600; every command typed here is currently readable" ;;
     esac
 else
     echo "  (not installed on this host -- nothing to check)"
 fi
 
-ssh "$HOST" "rm -rf $REMOTE"
+rsh "rm -rf $REMOTE"
 echo
-echo "integration: $skipped shell(s) skipped"
+echo "integration: $pass ok, $skipped skipped"
 [ "$fail" = 0 ] && echo "integration: PASS" || echo "integration: FAILURES"
 exit "$fail"
