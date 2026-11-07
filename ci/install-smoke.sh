@@ -85,10 +85,10 @@ if ! grep -q "$MARK" "$LOG"; then
     # history are, and that is only observable from inside the session. The
     # transcript lands in the job artifact.
     printf '   first command missing -- asking the shell what it can see\n'
-    CS_EXTRA='echo CSDBG_PC=$PROMPT_COMMAND;echo CSDBG_HC=$HISTCONTROL;echo CSDBG_HS=$HISTSIZE;echo CSDBG_HF=$HISTFILE;shopt histappend;set -o history;HISTTIMEFORMAT= history 3;HISTTIMEFORMAT= history 1' \
+    CS_EXTRA='echo CSDBG_PC=$PROMPT_COMMAND;echo CSDBG_HC=$HISTCONTROL;echo CSDBG_HF=$HISTFILE;echo CSDBG_N=$(HISTTIMEFORMAT= history | wc -l);HISTTIMEFORMAT= history' \
         python3 tests/drive-pty.py bash system 30 /tmp/smoke-diag.log >/dev/null 2>&1
-    printf '   last records in %s:\n' "$LOG"
-    tail -5 "$LOG"
+    printf '   every record in %s (%s lines):\n' "$LOG" "$(wc -l < "$LOG")"
+    cat "$LOG"
     die "probe command not recorded by bash"
 fi
 printf '   bash recorded: %s\n' "$(grep -m1 "$MARK" "$LOG" | sed 's/.*:: //')"
