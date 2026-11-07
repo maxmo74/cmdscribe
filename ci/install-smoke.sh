@@ -79,7 +79,18 @@ python3 tests/drive-pty.py bash system 30 /tmp/smoke-bash.log >/dev/null 2>&1 \
     || die "drive-pty.py failed for bash"
 sleep 2
 [ -e "$LOG" ] || die "no $LOG after a bash login shell ran commands"
-grep -q "$MARK" "$LOG" || { tail -5 "$LOG"; die "probe command not recorded by bash"; }
+if ! grep -q "$MARK" "$LOG"; then
+    # Do not just fail: make the shell describe itself. Whatever is wrong, the
+    # answer is in what the shell thinks PROMPT_COMMAND, HISTCONTROL and its own
+    # history are, and that is only observable from inside the session. The
+    # transcript lands in the job artifact.
+    printf '   first command missing -- asking the shell what it can see\n'
+    CS_EXTRA='echo CSDBG_PC=$PROMPT_COMMAND;echo CSDBG_HC=$HISTCONTROL;echo CSDBG_HS=$HISTSIZE;echo CSDBG_HF=$HISTFILE;shopt histappend;set -o history;HISTTIMEFORMAT= history 3;HISTTIMEFORMAT= history 1' \
+        python3 tests/drive-pty.py bash system 30 /tmp/smoke-diag.log >/dev/null 2>&1
+    printf '   last records in %s:\n' "$LOG"
+    tail -5 "$LOG"
+    die "probe command not recorded by bash"
+fi
 printf '   bash recorded: %s\n' "$(grep -m1 "$MARK" "$LOG" | sed 's/.*:: //')"
 
 step "3b. a command typed before the first prompt is still recorded"

@@ -49,6 +49,18 @@ def main() -> int:
     if not system:
         cmds.insert(0, ". %s\n" % entry)
 
+    # CS_EXTRA="cmd;cmd" appends commands to the session. Exists so a failing
+    # run can be made to diagnose itself -- dump `history`, PROMPT_COMMAND and
+    # the HIST* variables from INSIDE the shell that misbehaved, and let the
+    # transcript artifact carry the answer. Without this there is no way to see
+    # what the shell thought its history was, from outside.
+    extra = os.environ.get("CS_EXTRA")
+    if extra:
+        for part in extra.split(";"):
+            part = part.strip()
+            if part:
+                cmds.insert(-1, part + "\n")
+
     pid, fd = pty.fork()
     if pid == 0:                                    # child
         os.environ.pop("ZDOTDIR", None)
