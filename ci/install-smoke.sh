@@ -84,12 +84,29 @@ step "3. capture through a real login shell (bash)"
 # the real discriminator is first-session-of-boot. A control that varies two
 # variables proves nothing; that is why this comment is longer than the code.
 #
-# What is known: on the runner only, and only for the first bash session after
-# install, the first command of the session is not recorded while every later
-# command is. Debian and macOS do not reproduce it, with HISTFILE present or
-# absent. The failure path prints the full log, the shell's own view of
-# PROMPT_COMMAND/HISTCONTROL/HISTFILE/history, and a second scrubbed attempt, so
-# whoever picks this up starts with the data rather than with a guess.
+# What is known, and the hypothesis has moved twice so it is written with its
+# evidence rather than its confidence. The missing record correlates with the
+# FIRST RECORD WRITTEN INTO A FRESHLY CREATED LOG FILE, not with the first
+# command of a session: step 3 runs against a log that step 0 deleted and loses
+# a record; 3b, 3c and 4 run against an existing file and lose nothing; step 9
+# deleted the file again and lost one again. That points at rsyslog's lazy file
+# creation on Ubuntu, where rsyslog runs unprivileged, rather than at the shell
+# hook at all -- which would also explain why no bash-level change fixed it and
+# why Debian never showed it.
+#
+# Not established. The failure path dumps the log, the shell's own view of
+# PROMPT_COMMAND/HISTCONTROL/HISTFILE/history, and a scrubbed retry, so the next
+# person starts from data rather than from this paragraph.
+env -i PATH="$PATH" HOME="$HOME" TERM=xterm \
+    python3 tests/drive-pty.py bash system 30 /tmp/smoke-warm.log >/dev/null 2>&1 || true
+sleep 2
+if [ -e "$LOG" ]; then
+    printf '   warm-up: log exists with %s record(s); the probe below is therefore\n' "$(wc -l < "$LOG")"
+    printf '             not measuring rsyslog creating the file\n'
+else
+    printf '   warm-up produced no log file -- probe will hit first-write-to-new-file\n'
+fi
+
 env -i PATH="$PATH" HOME="$HOME" TERM=xterm \
     python3 tests/drive-pty.py bash system 30 /tmp/smoke-bash.log >/dev/null 2>&1 \
     || die "drive-pty.py failed for bash"
@@ -297,12 +314,20 @@ printf '   rsyslog still parses: %s\n' \
     "$(rsyslogd -N1 >/dev/null 2>&1 && echo yes || echo NO)"
 
 step "9. install again after uninstall"
-rm -f "$LOG"   # only because step 0 requires a clean host; uninstall kept it
+# Do NOT delete the log here. An earlier version did, to satisfy step 0's
+# clean-host requirement, which is meaningless mid-run -- and it changed the
+# thing under test. Deleting the file makes the next record the first one written
+# into a freshly created file, and that is exactly the situation in which a
+# record goes missing on this runner. The step was measuring its own setup.
+# Assert on records produced after reinstall instead, which is what the step is
+# actually about.
+n_before=$(wc -l < "$LOG")
 ./install.sh >/dev/null || die "install after uninstall failed"
 python3 tests/drive-pty.py bash system 30 /tmp/smoke3.log >/dev/null 2>&1
 sleep 2
-[ -e "$LOG" ] && grep -q "$MARK" "$LOG" || die "capture does not work after uninstall+reinstall"
-printf '   capturing again\n'
+new=$(( $(wc -l < "$LOG") - n_before ))
+[ "$new" -gt 0 ] || die "no records at all captured after uninstall+reinstall"
+printf '   %s records captured after reinstall\n' "$new"
 
 step "10. uninstall leaves a machine that logs nothing of ours"
 ./uninstall.sh >/dev/null
