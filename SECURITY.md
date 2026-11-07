@@ -170,4 +170,12 @@ person. If you need a support commitment, this is not that.
    A fix that passes review and does nothing is still a fix that does nothing.
 8. zsh is not subject to 7 in the same way: `preexec` is event-driven rather
    than a poll of `history`. If you are comparing the two shells, the bash
-   layer has the weaker claim about its own first record.
+   layer has the weaker claim about its own first record — and that weakness is
+   demonstrably exploitable by third-party code. Under GitHub Actions, whose
+   bash integration reaches the child shell and mutates the history list between
+   prompts, **the first command of every bash session went unrecorded** while
+   every later command was captured normally; the identical probe with a scrubbed
+   environment recorded all of them. Nothing in cmdscribe was at fault, which is
+   precisely the problem: any software on a host that can alter `history` between
+   prompts can suppress the bash layer's first record of a session, and the log
+   will not mention that it did. The kernel layer sees the `execve` regardless.
