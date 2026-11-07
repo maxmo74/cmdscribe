@@ -187,18 +187,30 @@ person. If you need a support commitment, this is not that.
    this seeded the baseline at *install* time, which is inside `/etc/profile.d`
    and therefore before bash has read `HISTFILE`: always 0, suppressing nothing.
    A fix that passes review and does nothing is still a fix that does nothing.
-8. zsh is not subject to 7 in the same way: `preexec` is event-driven rather
-   than a poll of `history`. The bash layer's claim about its own **first**
-   record of a session is the weakest thing it says, because that record is read
-   out of a mutable list that anything in the shell can change between prompts.
+8. **The first record written into a newly created log file can be silently
+   dropped.** Seen on Ubuntu runners; Debian does not show it. rsyslog opens the
+   file lazily on first write and the record that triggers the open does not
+   always land, so the first command after install — and the first command after
+   anything recreates the file — may simply be absent, with nothing in the log
+   marking a gap.
 
-   This is not hypothetical, and the honest version of what was observed: on the
-   GitHub Actions runner, in the first bash session after install, the first
-   command of every session went unrecorded while every later command was
-   captured normally. **The cause is not established.** It does not reproduce on
-   Debian or macOS, with `HISTFILE` present or absent; scrubbing the inherited
-   environment does not change it; and it is confined to the first session, which
-   is the one thing that ruled out in sequence was not. What the case
-   demonstrates regardless of cause is the structural point: whatever the
-   mechanism, the bash layer can lose a session's first command and the log will
-   not mention that it did. The kernel layer sees the `execve` either way.
+   `ci/install-smoke.sh` now warms the file before probing, which is why the
+   suite is green; **the underlying behaviour is not fixed.** The mechanism is
+   not fully established. What is known, because each of these was tested: it is
+   not the shell hook (no change to it moved the behaviour, across four commits
+   that assumed otherwise), not the inherited environment (scrubbing changed
+   nothing), and not bash history state — creating the file first makes it
+   disappear entirely, which is the only thing that has.
+
+   The general lesson is in `history` anyway: the bash layer reads the typed line
+   out of a mutable list and can lose a session's first command without the log
+   saying so. The kernel layer sees the `execve` either way.
+
+9. **On Ubuntu, rotation may silently kill logging — inferred, not yet
+   verified.** The logrotate config says `create 0600 root root`, but Ubuntu runs
+   rsyslog as the unprivileged `syslog` user, which cannot open a `root:root
+   0600` file that logrotate just created. If that holds, cmdscribe stops
+   logging completely after the first rotation on Ubuntu and nothing reports it.
+   Verify with `logrotate -f` on a real Ubuntu host before trusting rotation
+   there; the fix is a group both can use. Recorded here as an inference with its
+   verification method attached, not as a finding.

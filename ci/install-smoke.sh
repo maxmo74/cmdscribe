@@ -158,24 +158,26 @@ if ! grep -q "$MARK" "$LOG"; then
     if [ "${CMDSCRIBE_CI:-}" = "1" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
         # LOUD SKIP -- not a silent one, which is the whole distinction.
         #
-        # On GitHub Actions runners only, in the first bash session after
-        # install, the first command of the session is not recorded. Cause not
-        # established; see SECURITY.md limitation 8. It does not reproduce on
-        # Debian or macOS with HISTFILE present or absent, and scrubbing the
-        # inherited environment does not change it.
+        # Currently DORMANT. The warm-up above creates the log file, this branch
+        # has not fired since, and the first-command assertion is enforced again.
+        # It stays because the underlying behaviour -- the first record written
+        # into a freshly created log file can be dropped -- is documented and
+        # unfixed (SECURITY.md limitation 8); if it reappears this reports itself
+        # loudly instead of quietly reddening a suite that would then be telling
+        # the truth about something else.
         #
         # The assertion is unconditional everywhere else, including any real
         # host, because that is where it would matter. Everything after this
         # point still runs unconditionally -- 3b, 3c and step 4 all capture
         # through later sessions -- so a logger that is actually broken cannot
-        # hide behind this branch. What is not enforced here is one narrow
-        # first-session behaviour on a synthetic host, not "does logging work".
+        # hide behind this branch.
         printf '\n   ============================================================\n'
         printf '   SKIP: first-command-of-session assertion NOT enforced.\n'
-        printf '         Scope: GitHub Actions runner, first bash session only.\n'
-        printf '         Cause: not established. SECURITY.md limitation 8.\n'
+        printf '         Scope: CI runner, and only the first probe session.\n'
+        printf '         Cause: first record into a newly created log file.\n'
+        printf '         SECURITY.md limitation 8. Unfixed.\n'
         printf '         Everything else in this job still runs and still fails\n'
-        printf '         hard. This is the only assertion the runner can skip.\n'
+        printf '         hard. This is the only assertion CI can skip.\n'
         printf '   ============================================================\n'
         SKIPPED=$(( ${SKIPPED:-0} + 1 ))
     else
