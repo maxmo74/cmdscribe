@@ -169,13 +169,17 @@ person. If you need a support commitment, this is not that.
    and therefore before bash has read `HISTFILE`: always 0, suppressing nothing.
    A fix that passes review and does nothing is still a fix that does nothing.
 8. zsh is not subject to 7 in the same way: `preexec` is event-driven rather
-   than a poll of `history`. If you are comparing the two shells, the bash
-   layer has the weaker claim about its own first record — and that weakness is
-   demonstrably exploitable by third-party code. Under GitHub Actions, whose
-   bash integration reaches the child shell and mutates the history list between
-   prompts, **the first command of every bash session went unrecorded** while
-   every later command was captured normally; the identical probe with a scrubbed
-   environment recorded all of them. Nothing in cmdscribe was at fault, which is
-   precisely the problem: any software on a host that can alter `history` between
-   prompts can suppress the bash layer's first record of a session, and the log
-   will not mention that it did. The kernel layer sees the `execve` regardless.
+   than a poll of `history`. The bash layer's claim about its own **first**
+   record of a session is the weakest thing it says, because that record is read
+   out of a mutable list that anything in the shell can change between prompts.
+
+   This is not hypothetical, and the honest version of what was observed: on the
+   GitHub Actions runner, in the first bash session after install, the first
+   command of every session went unrecorded while every later command was
+   captured normally. **The cause is not established.** It does not reproduce on
+   Debian or macOS, with `HISTFILE` present or absent; scrubbing the inherited
+   environment does not change it; and it is confined to the first session, which
+   is the one thing that ruled out in sequence was not. What the case
+   demonstrates regardless of cause is the structural point: whatever the
+   mechanism, the bash layer can lose a session's first command and the log will
+   not mention that it did. The kernel layer sees the `execve` either way.

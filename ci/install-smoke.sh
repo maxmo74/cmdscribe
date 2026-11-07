@@ -75,20 +75,21 @@ rsyslogd -N1 >/tmp/rsyslog-check 2>&1 || { cat /tmp/rsyslog-check; die "rsyslogd
 printf '   rsyslogd -N1 ok\n'
 
 step "3. capture through a real login shell (bash)"
-# Runs with a scrubbed environment, and this is a measured decision rather than
-# a workaround. On this runner, with the job step's environment inherited, the
-# first command of the session is never recorded; with only PATH, HOME and TERM
-# inherited, all five land. GitHub's bash shell integration reaches the child
-# bash -- its OSC 3008 markers appear in the transcript -- and mutates the
-# history list between prompts: the baseline read 14 entries loaded from
-# HISTFILE while the session's own history then numbered from 1.
+# Runs with a scrubbed environment. This is NOT because scrubbing fixes anything
+# -- it does not, and the record is kept here because the wrong conclusion was
+# drawn from this job once already. The control that appeared to implicate
+# GitHub's injected shell integration differed in TWO ways at once: it had a
+# clean environment and it was a later session. Re-running the probe scrubbed as
+# the FIRST session still loses command one, so the environment is exonerated and
+# the real discriminator is first-session-of-boot. A control that varies two
+# variables proves nothing; that is why this comment is longer than the code.
 #
-# This job's subject is cmdscribe on a host, not GitHub's shell integration, so
-# the probe runs in the environment an ssh login would actually have. Two things
-# keep this honest: the scrub is minimal (three variables, no unset of anything
-# cmdscribe itself reads), and the failure path prints the result of BOTH
-# variants side by side, so if a real host ever starts behaving like this the
-# scrubbed run will fail too and say so.
+# What is known: on the runner only, and only for the first bash session after
+# install, the first command of the session is not recorded while every later
+# command is. Debian and macOS do not reproduce it, with HISTFILE present or
+# absent. The failure path prints the full log, the shell's own view of
+# PROMPT_COMMAND/HISTCONTROL/HISTFILE/history, and a second scrubbed attempt, so
+# whoever picks this up starts with the data rather than with a guess.
 env -i PATH="$PATH" HOME="$HOME" TERM=xterm \
     python3 tests/drive-pty.py bash system 30 /tmp/smoke-bash.log >/dev/null 2>&1 \
     || die "drive-pty.py failed for bash"
