@@ -85,7 +85,13 @@ if ! grep -q "$MARK" "$LOG"; then
     # history are, and that is only observable from inside the session. The
     # transcript lands in the job artifact.
     printf '   first command missing -- asking the shell what it can see\n'
-    CS_EXTRA='echo CSDBG_PC=$PROMPT_COMMAND;echo CSDBG_HC=$HISTCONTROL;echo CSDBG_HF=$HISTFILE;echo CSDBG_N=$(HISTTIMEFORMAT= history | wc -l);HISTTIMEFORMAT= history' \
+    # The decisive number is CSDBG_BASE. If it is 0, seeding ran at the first
+    # prompt with nothing in history, so the emit for command one simply never
+    # fired -- the bug is in when PROMPT_COMMAND runs. If it is 1, the first
+    # invocation landed ON command one and seeding consumed it -- the bug is in
+    # the seeding rule. Two different bugs, two different fixes, and everything
+    # said about this so far has been a guess until this value is known.
+    CS_EXTRA='echo CSDBG_BASE=[$__CMDSCRIBE_HISTBASE];echo CSDBG_PC=$PROMPT_COMMAND;echo CSDBG_HC=$HISTCONTROL;echo CSDBG_HF=$HISTFILE;echo CSDBG_N=$(HISTTIMEFORMAT= history | wc -l);HISTTIMEFORMAT= history' \
         python3 tests/drive-pty.py bash system 30 /tmp/smoke-diag.log >/dev/null 2>&1
     printf '   every record in %s (%s lines):\n' "$LOG" "$(wc -l < "$LOG")"
     cat "$LOG"
