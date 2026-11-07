@@ -54,7 +54,18 @@ __cmdscribe_bash_run() {
     #
     # Empty means "store everything". This is a logger; history fidelity beats
     # whatever the user's dotfiles wanted.
+    #
+    # HISTIGNORE gets the same treatment for the same reason. It used to be
+    # unset once at install, which is the identical mistake: a ~/.bashrc that
+    # exports HISTIGNORE afterwards silently stops every matching command from
+    # entering history, so the hook never sees them and reports nothing about
+    # the gap. HISTIGNORE is also strictly more dangerous than HISTCONTROL
+    # here, because it is a glob list -- `HISTIGNORE='ls *'` erases every ls a
+    # user runs while leaving the log otherwise full and entirely convincing.
+    # Anything that can be set after /etc/profile.d must be re-asserted at every
+    # prompt or it is not a guarantee at all.
     HISTCONTROL=
+    unset HISTIGNORE
 
     # SC1007: the space after `=` is deliberate. HISTTIMEFORMAT must be
     # empty for this one `history` call; `HISTTIMEFORMAT=history 1` would
@@ -127,11 +138,12 @@ __cmdscribe_bash_install() {
     shopt -s histappend 2>/dev/null
     set -o history 2>/dev/null
 
-    unset HISTIGNORE
-    # Deliberately NOT exporting HISTCONTROL here. It belongs in the run
-    # function, which executes after every prompt and therefore after any
-    # ~/.bashrc has had its say; set once here it is simply overwritten by the
-    # first user rc file that assigns it, which is most of them.
+    # HISTIGNORE and HISTCONTROL are deliberately NOT handled here. Both are
+    # re-asserted inside the run function, which executes after every prompt and
+    # therefore after any ~/.bashrc has had its say. Set once here they are simply
+    # overwritten by the first user rc file that assigns them, which is most of
+    # them -- and unlike a missing record, a HISTIGNORE pattern produces a log
+    # that looks complete while quietly omitting a whole class of commands.
     export PROMPT_COMMAND=__cmdscribe_bash_run
 }
 
