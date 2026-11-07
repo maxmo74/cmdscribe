@@ -5,7 +5,10 @@
 
 # entry.zsh -- single file the system zsh init sources.
 [ -n "$ZSH_VERSION" ] || return 0
-[ -n "$CMDSCRIBE_HOME" ] || CMDSCRIBE_HOME=/usr/share/cmdscribe
+
+# See entry.bash. ${(%):-%x} is this file's own path in zsh.
+_cs_self=${(%):-%x}
+: "${CMDSCRIBE_HOME:=${_cs_self%/*}}"
 
 case "$(uname -s)" in
     Linux)               . "$CMDSCRIBE_HOME/lib/os/linux.sh"  ;;

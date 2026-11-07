@@ -69,14 +69,31 @@ the first draft of this did.
 
 | | bash | zsh |
 |---|---|---|
-| **Linux** | verified — Debian 13, bash 5.2, real pty | verified — Debian 13, zsh 5.9, real pty |
-| **macOS** | verified — macOS 27.2, bash 3.2 | verified — zsh 5.9 |
-| **BSD** | untested | untested |
+| **Linux** | verified — Debian 13, bash 5.2, installed + login shell | verified — Debian 13, zsh 5.9, installed + login shell |
+| **macOS** | verified — macOS 27.2, bash 3.2, installed + login shell | verified — macOS 27.2, zsh 5.9, installed + login shell |
+| **BSD** | should work, untested | should work, untested |
+
+"Installed" is doing real work in that table. Every macOS result earlier in
+this project's history came from sourcing the entry file out of a checkout,
+which never exercises where the runtime actually lives — and that is exactly
+where macOS bites. `/usr` sits on the SIP-sealed read-only system volume, so
+`mkdir /usr/share/cmdscribe` fails with `EPERM` **as root**. The runtime
+installs to `/usr/local/share/cmdscribe` there, and the entry files now
+locate themselves from their own path instead of trusting a hardcoded
+default.
 
 `make check` runs the acceptance matrix against whatever shells are
 installed locally. `tests/integration.sh` runs against a real host over
 ssh and skips shells that are not installed rather than reporting them as
 failures.
+
+The BSD cells say *should work* rather than *works*: `lib/os/bsd.sh` uses
+the same `ps(1)`-based attribution as the macOS layer that passes, and
+nothing in it is Linux-specific, so there is no reason to expect trouble.
+But no BSD has ever executed it, and "there is no reason to expect
+trouble" is exactly the kind of sentence that has been wrong about
+portability all the way through this project. Treat it as untested until
+someone runs `tests/integration.sh` on a BSD box.
 
 One thing the automated suite does **not** cover: attribution through
 `sudo su -`. It was verified by hand (see below) but reproducing it
@@ -98,11 +115,30 @@ tail -f /var/log/cmdscribe.log
 ```
 
 On macOS there is no rsyslog; records go to the unified log via
-`logger(1)`:
+`logger(1)`. Note the predicate:
 
 ```sh
-log show --predicate 'process == "cmdscribe"' --last 1h
+log stream --style compact \
+  --predicate 'eventMessage CONTAINS "cmdscribe: login="'
 ```
+
+Or after the fact: `log show --last 1h --style compact --predicate '...'`.
+
+Do **not** add `--level debug` to `log show`. Measured on macOS 27.2, that
+variant returns **zero rows** where the same command without it returns 26.
+`--debug` is fine, plain is fine, `--level debug` is not. It fails by
+looking like an idle machine, which is the worst way for a query to fail.
+
+Also note that on macOS these records are readable by **any** local user,
+because the unified log is not access-controlled the way a `0600` file is.
+See [SECURITY.md](SECURITY.md).
+
+Not `process == "cmdscribe"`. macOS `logger(1)` **discards the `-t` tag**,
+so the record is filed under `process=/usr/bin/logger` and that predicate
+matches nothing — which reads as "nobody ran anything" rather than "your
+query is wrong". The marker is therefore carried in the message body, and
+on Linux rsyslog already puts the tag in the line, so the same search
+string works on both.
 
 ## What it does not capture
 

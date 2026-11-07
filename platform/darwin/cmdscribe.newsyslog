@@ -1,3 +1,13 @@
-# /etc/newsyslog.d/cmdscribe.conf
-# <logname>                     <owner:group> <mode> <count> <size> <flags>
-/var/log/cmdscribe.log          root:wheel    0600   12      10240 Z
+# NOT INSTALLED BY install.sh -- kept for the case where you route
+# records to a file yourself.
+#
+# On macOS nothing writes /var/log/cmdscribe.log: logger(1) goes to the
+# unified log. Installing a rotation rule for a file that never appears is
+# how a box ends up looking like it keeps logs when it keeps none.
+#
+# If you do add an asl rule (/etc/asl.conf) sending local0 to a file,
+# install this alongside it:
+#   install -m 0644 -o root -g wheel this /etc/newsyslog.d/cmdscribe.conf
+#
+# <logname>               <owner:group> <mode> <count> <size> <flags>
+/var/log/cmdscribe.log    root:wheel    0600   12      10240 Z

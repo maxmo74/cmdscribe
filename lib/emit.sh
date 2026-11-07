@@ -14,6 +14,13 @@
 : "${CMDSCRIBE_FACILITY:=local0.notice}"
 : "${CMDSCRIBE_TAG:=cmdscribe}"
 : "${CMDSCRIBE_MAX:=4000}"
+# Set by the OS layer. See lib/os/darwin.sh: on macOS logger(1) DISCARDS
+# the -t tag, so the only way to make a record findable is to put the
+# marker in the message body. On Linux rsyslog already writes the tag via
+# %syslogtag%, so the prefix stays empty there. Either way the rendered
+# line contains "cmdscribe: login=", which is the one search string that
+# works on every platform.
+: "${CMDSCRIBE_MSG_PREFIX:=}"
 
 cmdscribe_emit() {
     # $1 = command text, $2 = exit status
@@ -30,5 +37,5 @@ cmdscribe_emit() {
         && _cs_cmd="${_cs_cmd:0:$CMDSCRIBE_MAX}...[truncated]"
 
     logger -p "$CMDSCRIBE_FACILITY" -t "$CMDSCRIBE_TAG" -- \
-        "login=$(cmdscribe_origin) actas=$(id -un) pid=$$ ppid=$PPID tty=$(cmdscribe_tty) rc=$_cs_rc :: $_cs_cmd"
+        "${CMDSCRIBE_MSG_PREFIX}login=$(cmdscribe_origin) actas=$(id -un) pid=$$ ppid=$PPID tty=$(cmdscribe_tty) rc=$_cs_rc :: $_cs_cmd"
 }

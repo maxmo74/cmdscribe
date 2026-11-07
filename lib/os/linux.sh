@@ -8,6 +8,11 @@
 # Selected by install.sh on Linux only. Everything here may use
 # Linux-specific facilities (/proc, GNU coreutils).
 
+# Empty on purpose: rsyslog already writes the tag into the line via
+# %syslogtag%, so the rendered record contains "cmdscribe: login=" with no
+# help from us. Adding a prefix here would double it.
+CMDSCRIBE_MSG_PREFIX=""
+
 # Best-effort recovery of who ORIGINALLY logged in, even across
 # `sudo su -`. Preference order:
 #   1. $SUDO_USER  -- set by sudo, but LOST across `su -`

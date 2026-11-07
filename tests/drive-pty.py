@@ -24,13 +24,16 @@ import time
 def main() -> int:
     shell = sys.argv[1]
     entry = sys.argv[2]
+    # "system" means: do not source anything, and start the shell as a
+    # login shell so it loads whatever the installer put in /etc. That is
+    # how you test an actual installation instead of a manual source.
+    system = entry == "system"
     timeout = float(sys.argv[3]) if len(sys.argv) > 3 else 30.0
     # Capturing the terminal makes a silent no-record failure legible.
     transcript = sys.argv[4] if len(sys.argv) > 4 else None
     sink_log = open(transcript, "wb") if transcript else None
 
     cmds = [
-        ". %s\n" % entry,
         "echo IT_PROBE\n",
         "false\n",
         "cd /tmp\n",
@@ -43,11 +46,21 @@ def main() -> int:
         "exit\n",
     ]
 
+    if not system:
+        cmds.insert(0, ". %s\n" % entry)
+
     pid, fd = pty.fork()
     if pid == 0:                                    # child
         os.environ.pop("ZDOTDIR", None)
-        if "zsh" in shell:
-            os.execvp(shell, [shell, "-d"])         # -d skips .zshenv only
+        if system:
+            # Exactly what sshd execs. No flags: on Debian zsh, `-d`
+            # suppresses the *global* rc files as well as .zshenv, so
+            # passing it here skips the very /etc/zsh/zshrc the installer
+            # writes into and makes a correct install look dead. Measured,
+            # not guessed: `zsh -d` -> rc not read, `zsh` -> rc read.
+            os.execvp(shell, [shell, "-l"] if "bash" in shell else [shell])
+        elif "zsh" in shell:
+            os.execvp(shell, [shell, "-d"])
         else:
             os.execvp(shell, [shell, "--norc", "-i"])
 

@@ -54,10 +54,30 @@ Enforced in three places, all of which must stay:
 
 - rsyslog: `fileCreateMode="0600"`, `dirCreateMode="0700"`
 - logrotate: `create 0600 root root`
-- newsyslog (BSD/macOS): mode field `0600`
+- newsyslog (BSD): mode field `0600`
 
 `make check` does not cover this; `tests/integration.sh` asserts the mode
-on an installed host.
+on an installed host. Verified on Debian 13: the log lands `0600
+root:root`, and `sudo -u nobody cat` gets `Permission denied`.
+
+### macOS has none of this protection
+
+On macOS the records go into the **unified log**, which any local user can
+read. Verified from an ordinary uid-501 account: `log show --predicate
+'eventMessage CONTAINS "cmdscribe: login="'` returned every record. There
+is no `0600` to set because there is no file.
+
+So the confidentiality this project has on Linux **does not exist on
+macOS**, and no `fileCreateMode` will fix it. What macOS gets is
+attribution and a record of what ran, not secrecy. Do not put cmdscribe on
+a shared Mac and tell yourself the command history is private.
+
+The mitigation is to route `local0` to a mode-restricted file via
+`/etc/asl.conf`, then install `platform/darwin/cmdscribe.newsyslog`
+alongside it. That file is deliberately **not** installed by default: on a
+stock Mac nothing writes `/var/log/cmdscribe.log`, and shipping a rotation
+rule for a file that never appears is how a box ends up looking like it
+keeps logs when it keeps none.
 
 ## Secrets in argv are recorded. This is not a bug you can fix.
 
@@ -97,7 +117,9 @@ person. If you need a support commitment, this is not that.
    exists, the two layers do not actually cross-check each other and the
    "self-verifying" claim is aspirational. Do not cite this project as
    evidence of coverage until that tool ships.
-2. `lib/os/bsd.sh` is **untested**. No BSD has been used to run it.
+2. `lib/os/bsd.sh` **should work and has never been run**. It shares the
+   `ps(1)` attribution approach that passes on macOS and contains nothing
+   Linux-specific, but "should" is doing all the work in that sentence.
 3. Attribution through `sudo su -` is **verified by hand, not by the
    automated suite**. `capture/zsh.zsh` and `capture/bash.sh` are each
    verified on Linux and macOS; `os/bsd.sh` is verified on nothing.

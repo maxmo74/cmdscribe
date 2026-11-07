@@ -13,6 +13,13 @@
 # rsyslog + logrotate. Install platform/*/newsyslog instead, or install
 # rsyslog from ports if you want the Linux rules verbatim.
 
+# UNTESTED, and it matters here: whether BSD logger(1) preserves the -t
+# tag is exactly the kind of detail that differs between them. macOS drops
+# it and needs the prefix; Linux does not. Left empty so a BSD that
+# behaves like Linux gets it right, but verify which you have before
+# trusting a search for "cmdscribe: login=".
+CMDSCRIBE_MSG_PREFIX=""
+
 cmdscribe_origin() {
     if [ -n "$SUDO_USER" ]; then
         printf '%s' "$SUDO_USER"

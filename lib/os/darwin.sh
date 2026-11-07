@@ -14,6 +14,13 @@
 # there is no tamper-resistant second layer, so cmdscribe-reconcile
 # degrades to the single shell layer and says so.
 
+# logger(1) on macOS silently DROPS the -t tag: the record is filed under
+# process=/usr/bin/logger and the tag appears nowhere in it. Verified on
+# macOS 27.2 -- `log show --predicate 'process == "cmdscribe"'` returns
+# nothing at all, which reads as "no commands were run" rather than "your
+# query is wrong". Carrying the marker in the message body is the fix.
+CMDSCRIBE_MSG_PREFIX="cmdscribe: "
+
 cmdscribe_origin() {
     if [ -n "$SUDO_USER" ]; then
         printf '%s' "$SUDO_USER"
@@ -37,7 +44,6 @@ EOF2
 
     id -un
 }
-
 cmdscribe_tty() {
     local _cs_t
     _cs_t=$(tty 2>/dev/null)
