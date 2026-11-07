@@ -1,0 +1,11 @@
+/var/log/cmdscribe.log {
+    weekly
+    rotate 12
+    # Without `create` logrotate recreates this world-readable, which
+    # hands every command typed on the box to any local user.
+    create 0600 root root
+    missingok
+    notifempty
+    compress
+    delaycompress
+}

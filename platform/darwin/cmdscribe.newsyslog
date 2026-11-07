@@ -1,0 +1,3 @@
+# /etc/newsyslog.d/cmdscribe.conf
+# <logname>                     <owner:group> <mode> <count> <size> <flags>
+/var/log/cmdscribe.log          root:wheel    0600   12      10240 Z

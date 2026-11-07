@@ -1,0 +1,32 @@
+# /etc/audit/rules.d/cmdscribe.rules
+#
+# MINIMAL by design. cmdscribe's shell layer already covers interactive
+# commands; auditd is here for the two things a shell hook cannot do:
+# tamper-proof attribution (auid) and guarding the shell hook itself.
+#
+# Deploy with: augenrules --load   (or: service auditd restart)
+
+-D
+-b 8192
+-f 1
+
+# Every execve traceable to a human login. auid is stamped at login by
+# pam_loginuid and is immutable for the session -- including across
+# sudo, su - and pkexec. That is the only attribution that cannot be
+# argued with. auid=unset (4294967295) is boot-time daemons: skipped.
+-a exit,always -F arch=b64 -S execve -F auid>=1000 -F auid!=unset -k cmd
+-a exit,always -F arch=b64 -S execve -F auid=0                    -k cmd_root
+-a exit,always -F arch=b32 -S execve -F auid>=1000 -F auid!=unset -k cmd
+
+# auditd watches the layer that is trivial to disable.
+-w /usr/share/cmdscribe        -p wa -k cmdscribe_tamper
+-w /etc/rsyslog.d/10-cmdscribe.conf -p wa -k cmdscribe_tamper
+-w /var/log/cmdscribe.log      -p wa -k cmdscribe_tamper
+-w /etc/audit/rules.d          -p wa -k audit_tamper
+
+# Common escalation paths and the files this project exists to catch.
+-w /etc/sudoers                -p wa -k sudoers
+-w /etc/sudoers.d/             -p wa -k sudoers
+-w /root                       -p a   -k root_perms
+-w /etc/crontab                -p wa  -k cron
+-w /etc/cron.d/                -p wa  -k cron
