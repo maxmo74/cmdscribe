@@ -1,0 +1,18 @@
+# FreeBSD / OpenBSD / NetBSD only. UNTESTED -- no BSD has run cmdscribe.
+#
+# This is NOT for macOS. On macOS logger(1) posts to the unified log and
+# never reaches syslogd's asl file routing, so nothing would ever be written
+# to the file this rotates. Measured on macOS 27.2: an asl rule matching
+# Facility local0 captured 41 unrelated lines and zero cmdscribe records.
+# Use `install.sh --logfile` there instead.
+#
+# On the BSDs, base syslogd does honour facility routing, so this has a
+# chance of being the right shape -- but "has a chance" is the same phrase
+# the macOS version was written with, and it was wrong. Verify the file
+# actually fills up before trusting it.
+#
+# Install alongside a syslog.conf rule routing local0 to the file:
+#   install -m 0644 -o root -g wheel this /etc/newsyslog.d/cmdscribe.conf
+#
+# <logname>               <owner:group> <mode> <count> <size> <flags>
+/var/log/cmdscribe.log    root:wheel    0600   12      10240 Z

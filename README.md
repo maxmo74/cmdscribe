@@ -203,12 +203,31 @@ defensible.
 ## Uninstall
 
 ```sh
-./uninstall.sh
+sudo ./uninstall.sh
 ```
 
-Removes the hooks (restoring the `.bak` taken before editing) and the
-runtime. Leaves `/var/log/cmdscribe.log` alone, because that log is
-evidence.
+Reverts exactly what `install.sh` recorded: drop-in files it created are
+removed, files it appended to are restored from the byte-identical backup it
+took, the rsyslog rule is removed and rsyslog restarted.
+
+**It never deletes the log.** An auditing tool whose uninstall destroyed the
+audit trail would let anyone erase their own history with an
+uninstall/reinstall pair, so the log is left in place on every platform and
+uninstall says how many records it is keeping. Delete it yourself if that is
+what you want.
+
+Re-running `install.sh` is safe and idempotent — it will not stack duplicate
+hooks, and it still records already-present hooks for uninstall. That second
+part matters: the first version skipped it, so `install; install; uninstall`
+left the hooks live and logging continued after someone believed they had
+turned it off.
+
+If a hook exists that this installer did not place (no backup file),
+uninstall refuses to guess and says which lines to delete by hand rather
+than editing a system rc file it does not understand.
+
+Shells opened before the uninstall still have the hook loaded until they
+exit.
 
 ## License
 

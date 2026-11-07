@@ -89,7 +89,28 @@ hook_into() {
     fi
 
     if grep -qF "$MARK" "$_hi_f" 2>/dev/null; then
-        say "hook already present in $_hi_f"
+        # Already hooked. It MUST still be recorded, or a re-install wipes
+        # the manifest entry and a later uninstall leaves the hook live --
+        # which for an auditing tool means logging quietly continues after
+        # someone believes they turned it off. Measured on Debian 13.
+        if [ "$_hi_mode" = "create" ]; then
+            # A file we created is ours outright: uninstall deletes it, no
+            # backup involved. Treating it as an appended-to file is what
+            # made a re-install+uninstall leave /etc/profile.d/zz-cmdscribe.sh
+            # behind with its hook intact.
+            rec R "$_hi_f"
+            say "hook already present in $_hi_f (ours; uninstall will remove it)"
+        elif [ -f "$_hi_f.cmdscribe.bak" ]; then
+            rec B "$_hi_f"
+            say "hook already present in $_hi_f (recorded for uninstall)"
+        else
+            # No backup means the hook was not placed here by this
+            # installer, or the backup was removed. There is nothing safe
+            # to restore, so say so instead of pretending otherwise.
+            rec W "$_hi_f"
+            say "WARNING: $_hi_f already contains a cmdscribe hook but has"
+            say "  no backup; uninstall will not be able to restore it"
+        fi
         return 0
     fi
 
@@ -126,8 +147,10 @@ case "$OS" in
             # first attempt at an asl rule captured 41 unrelated lines and
             # none of ours.
             if [ ! -e "$LOGFILE_PATH" ]; then
+                # Deliberately NOT recorded in the manifest. An auditing
+                # tool whose uninstall deletes the audit trail lets anyone
+                # erase their own history with an uninstall/reinstall pair.
                 install -o root -g admin -m 0660 /dev/null "$LOGFILE_PATH"
-                rec R "$LOGFILE_PATH"
             fi
             LOGVAR="CMDSCRIBE_LOGFILE=$LOGFILE_PATH; "
             say "also writing $LOGFILE_PATH (0660 root:admin)"
@@ -204,10 +227,9 @@ case "$OS" in
         say "                     --predicate 'eventMessage CONTAINS \"cmdscribe: login=\"'"
         say "or after the fact: log show --last 1h \\"
         say "                     --predicate 'eventMessage CONTAINS \"cmdscribe: login=\"'"
-        # platform/darwin/cmdscribe.newsyslog is deliberately NOT installed:
-        # it rotates /var/log/cmdscribe.log, and on macOS nothing writes that
-        # file. Shipping a rotation rule for a file that never appears is
-        # how you end up believing logs are being kept when they are not.
+        # No rotation config is installed on macOS. platform/ holds one for
+        # the BSDs only, because a rotation rule for a file nothing writes is
+        # how a box ends up looking like it keeps logs when it keeps none.
         ;;
 esac
 

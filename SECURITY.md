@@ -72,12 +72,8 @@ macOS**, and no `fileCreateMode` will fix it. What macOS gets is
 attribution and a record of what ran, not secrecy. Do not put cmdscribe on
 a shared Mac and tell yourself the command history is private.
 
-The mitigation is to route `local0` to a mode-restricted file via
-`/etc/asl.conf`, then install `platform/darwin/cmdscribe.newsyslog`
-alongside it. That file is deliberately **not** installed by default: on a
-stock Mac nothing writes `/var/log/cmdscribe.log`, and shipping a rotation
-rule for a file that never appears is how a box ends up looking like it
-keeps logs when it keeps none.
+There is no asl mitigation, and an earlier version of this document
+recommended one. It does not work -- see below.
 
 **That mitigation does not work, and was removed as an option.** Tested on
 macOS 27.2: `logger(1)` posts to the unified log and never reaches syslogd's
