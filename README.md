@@ -19,6 +19,8 @@ login=massimo actas=root pid=4127 ppid=4125 tty=pts/0 rc=1 :: ansible-vault view
 
 **Not built yet:** DEB/RPM packages, Ansible roles, and the cross-checking tool (see [Roadmap](#roadmap)).
 
+**Docs:** [SECURITY.md](SECURITY.md) · [CHANGELOG](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+
 ## Quick start
 
 ```sh
