@@ -188,9 +188,70 @@ case "$OS" in
             note "$LOGFILE_PATH as root with 0600, which is strictly better"
             note "than a file the typing user appends to themselves"
         fi
+        # ---- who may own the log ------------------------------------- #
+        # The log's owner must be the account rsyslog actually runs as, and the
+        # group must be the one that owns /var/log. Neither can be hardcoded:
+        #
+        #   Debian  rsyslog runs as root     /var/log 0755 root:root
+        #   Ubuntu  rsyslog runs as syslog   /var/log 0775 root:adm
+        #
+        # Shipping `create 0600 root root` fails twice over on Ubuntu. logrotate
+        # refuses to rotate inside a directory that is writable by a group other
+        # than the one it is creating the file for, so it errors every week and
+        # the log NEVER rotates: a file full of typed passwords growing without
+        # bound, the only evidence a logrotate error nobody reads. And were it to
+        # rotate, the fresh root:root 0600 file would be unwritable by the
+        # unprivileged rsyslog, so logging would also silently stop.
+        #
+        # Mode stays 0600 throughout, so carrying the directory group grants that
+        # group nothing at all -- the group bits are empty. The set of readers is
+        # the file owner and root, which is the guarantee SECURITY.md makes.
+        CS_LOG_USER=root
+        CS_UNIT_READ=0
+        for cs_unit in /lib/systemd/system/rsyslog.service \
+                       /etc/systemd/system/rsyslog.service; do
+            if [ -r "$cs_unit" ]; then
+                CS_UNIT_READ=1
+                cs_u=$(sed -n 's/^[[:space:]]*User=\([A-Za-z0-9_-]*\).*/\1/p' \
+                        "$cs_unit" | tail -1)
+                [ -n "$cs_u" ] && CS_LOG_USER="$cs_u"
+            fi
+        done
+        # No readable unit does not mean rsyslog is root -- SysVinit, or a unit
+        # installed somewhere else. The running process is the authority when
+        # there is one, and root is the fallback when there is neither.
+        if [ "$CS_UNIT_READ" = 0 ]; then
+            cs_p=$(ps -C rsyslogd -o user= 2>/dev/null | head -1 | tr -d ' ')
+            [ -n "$cs_p" ] && CS_LOG_USER="$cs_p"
+        fi
+        id -u "$CS_LOG_USER" >/dev/null 2>&1 || CS_LOG_USER=root
+
+        CS_LOG_GROUP=$(stat -c '%G' /var/log 2>/dev/null || echo root)
+        id -g "$CS_LOG_GROUP" >/dev/null 2>&1 || CS_LOG_GROUP=root
+
+        note "log owner will be $CS_LOG_USER:$CS_LOG_GROUP, mode 0600"
+
+        # An existing log owned by someone else would be unwritable by the
+        # rsyslog account under this arrangement. Correct the owner rather than
+        # leave a host that silently logs nothing. Contents are not touched --
+        # uninstall keeps the evidence and so does this.
+        if [ "$CS_LOG_USER" != root ] && [ -e /var/log/cmdscribe.log ]; then
+            cs_cur=$(stat -c '%U' /var/log/cmdscribe.log 2>/dev/null || echo unknown)
+            if [ "$cs_cur" != "$CS_LOG_USER" ]; then
+                chown "$CS_LOG_USER:$CS_LOG_GROUP" /var/log/cmdscribe.log
+                chmod 0600 /var/log/cmdscribe.log
+                note "re-owned the log $cs_cur -> $CS_LOG_USER:$CS_LOG_GROUP so rsyslog can write it"
+            fi
+        fi
+
         if [ -d /etc/rsyslog.d ]; then
-            install -m 0644 -o root -g root \
-                "$SRC/platform/linux/10-cmdscribe.conf" /etc/rsyslog.d/
+            sed -e "s/@CS_LOG_USER@/$CS_LOG_USER/g" \
+                -e "s/@CS_LOG_GROUP@/$CS_LOG_GROUP/g" \
+                "$SRC/platform/linux/10-cmdscribe.conf" \
+                > /etc/rsyslog.d/10-cmdscribe.conf || {
+                    note "ERROR: could not write the rsyslog rule"; exit 1; }
+            chmod 0644 /etc/rsyslog.d/10-cmdscribe.conf
+            chown root:root /etc/rsyslog.d/10-cmdscribe.conf
             rec R /etc/rsyslog.d/10-cmdscribe.conf
             if command -v rsyslogd >/dev/null 2>&1; then
                 # Validate with the file already in place (that is the only
@@ -217,9 +278,13 @@ case "$OS" in
             fi
         fi
         if [ -d /etc/logrotate.d ]; then
-            install -m 0644 -o root -g root \
+            sed -e "s/@CS_LOG_USER@/$CS_LOG_USER/g" \
+                -e "s/@CS_LOG_GROUP@/$CS_LOG_GROUP/g" \
                 "$SRC/platform/linux/cmdscribe.logrotate" \
-                /etc/logrotate.d/cmdscribe
+                > /etc/logrotate.d/cmdscribe || {
+                    note "ERROR: could not write the logrotate config"; exit 1; }
+            chmod 0644 /etc/logrotate.d/cmdscribe
+            chown root:root /etc/logrotate.d/cmdscribe
             rec R /etc/logrotate.d/cmdscribe
         fi
         ;;

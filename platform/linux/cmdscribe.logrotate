@@ -1,9 +1,22 @@
+# Rendered by install.sh; @CS_LOG_USER@ and @CS_LOG_GROUP@ are substituted.
+#
+# Neither value can be hardcoded, and getting them wrong fails quietly:
+#
+#   - logrotate refuses to rotate a file in a directory that is writable by a
+#     group other than the one it is creating the file for. Ubuntu's /var/log is
+#     0775 root:adm, so `create 0600 root root` is rejected outright -- logrotate
+#     errors every week and the log NEVER rotates, growing without bound while
+#     holding typed passwords. Debian's /var/log is 0755 and hides this.
+#   - the created file must be writable by the account rsyslog runs as, which is
+#     root on Debian and syslog on Ubuntu. A root:root 0600 file is unwritable by
+#     an unprivileged rsyslog, so logging stops at the first rotation.
+#
+# Mode stays 0600. Without `create` at all, logrotate recreates this
+# world-readable and hands every command typed on the box to any local user.
 /var/log/cmdscribe.log {
     weekly
     rotate 12
-    # Without `create` logrotate recreates this world-readable, which
-    # hands every command typed on the box to any local user.
-    create 0600 root root
+    create 0600 @CS_LOG_USER@ @CS_LOG_GROUP@
     missingok
     notifempty
     compress

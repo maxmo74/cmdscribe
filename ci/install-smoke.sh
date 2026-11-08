@@ -268,31 +268,42 @@ printf '   collapsed into one record in both shells\n'
 
 step "6. the log is not readable by the people it records"
 perms=$(stat -c '%a' "$LOG")
-owner=$(stat -c '%U:%G' "$LOG")
+owner=$(stat -c '%U' "$LOG")
+grp=$(stat -c '%G' "$LOG")
 # The mode is the property that actually protects anyone, so it is asserted
 # without exception. A command log that anyone can read is a credential leak on
 # every host it sits on.
 [ "$perms" = "600" ] || die "$LOG is mode $perms, expected 0600"
-#
-# Ownership is more interesting than it first looks. rsyslog's fileOwner="root"
-# is a request that rsyslog can only honour when it runs as root. Debian does;
-# Ubuntu ships rsyslog as the unprivileged `syslog` user, so the file lands
-# syslog:syslog and nothing can do otherwise. Confidentiality still holds --
-# 0600 leaves only that account and root -- but asserting root:root here would
-# have made the TEST wrong rather than the host, which is the worse outcome.
-# Any owner besides those two is still a hard failure.
-case "$owner" in
-    root:root) ;;
-    syslog:syslog)
-        printf '   NOTE: %s is %s, not root:root.\n' "$LOG" "$owner"
-        printf '         Ubuntu runs rsyslog as the unprivileged `syslog` user, so\n'
-        printf '         fileOwner="root" cannot be honoured. Mode 0600 still confines\n'
-        printf '         the log to that account and root -- but that account CAN read\n'
-        printf '         it, unlike on Debian. See SECURITY.md, "File permissions".\n'
-        ;;
-    *) die "$LOG is owned by $owner; expected root:root, or syslog:syslog on Ubuntu" ;;
-esac
-printf '   %s %s\n' "$perms" "$owner"
+
+# Owner and group are derived from the HOST here, not from install.sh. Reusing
+# install.sh's answer would have the test agree with the installer's mistakes;
+# deriving it independently is what makes the assertion a check.
+want_user=root
+for unit in /lib/systemd/system/rsyslog.service /etc/systemd/system/rsyslog.service; do
+    [ -r "$unit" ] || continue
+    u=$(sed -n 's/^[[:space:]]*User=\([A-Za-z0-9_-]*\).*/\1/p' "$unit" | tail -1)
+    [ -n "$u" ] && want_user="$u"
+done
+if [ "$want_user" = root ]; then
+    p=$(ps -C rsyslogd -o user= 2>/dev/null | head -1 | tr -d ' ')
+    [ -n "$p" ] && want_user="$p"
+fi
+want_group=$(stat -c '%G' /var/log)
+
+# The group is not cosmetic. logrotate will not rotate a file in a group-writable
+# directory unless the file carries that directory's group, so a wrong group means
+# the log quietly never rotates -- an unbounded file of typed passwords, and the
+# only evidence is a logrotate error nobody reads. Asserting the group is what
+# keeps the bug that was actually found here from coming back.
+[ "$grp" = "$want_group" ] || die "$LOG is group $grp, expected $want_group (the group owning /var/log); logrotate will refuse to rotate it"
+[ "$owner" = "$want_user" ] || die "$LOG is owned by $owner, expected $want_user (the account rsyslog runs as); it cannot reopen a file it cannot write"
+
+if [ "$owner" != root ]; then
+    printf '   NOTE: the log is owned by %s, not root -- that is the account rsyslog\n' "$owner"
+    printf '         runs as on this distro, and it can read every record. Mode 0600\n'
+    printf '         means the group (%s) can read nothing. See SECURITY.md.\n' "$grp"
+fi
+printf '   %s %s:%s (owner = rsyslog account, group = /var/log group)\n' "$perms" "$owner" "$grp"
 
 step "7. re-install over an existing install (idempotence)"
 # Re-running install used to skip the manifest, which left hooks alive after a
