@@ -206,24 +206,34 @@ case "$OS" in
         # Mode stays 0600 throughout, so carrying the directory group grants that
         # group nothing at all -- the group bits are empty. The set of readers is
         # the file owner and root, which is the guarantee SECURITY.md makes.
-        CS_LOG_USER=root
-        CS_UNIT_READ=0
-        for cs_unit in /lib/systemd/system/rsyslog.service \
-                       /etc/systemd/system/rsyslog.service; do
-            if [ -r "$cs_unit" ]; then
-                CS_UNIT_READ=1
+        CS_LOG_USER=""
+        # Ground truth when it exists: the account the running daemon actually
+        # has. Ubuntu's unit carries no User= at all -- it drops privileges via
+        # $PrivDropToUser in /etc/rsyslog.conf -- so reading only the unit answers
+        # "root" on precisely the distro where the distinction matters. That was
+        # measured here, not assumed.
+        cs_p=$(ps -C rsyslogd -o user= 2>/dev/null | head -1 | tr -d ' ')
+        [ -n "$cs_p" ] && CS_LOG_USER="$cs_p"
+
+        # Not running yet -- fresh install, container, chroot -- so fall back to
+        # configuration, unit first, then the directive Ubuntu actually uses.
+        if [ -z "$CS_LOG_USER" ]; then
+            for cs_unit in /lib/systemd/system/rsyslog.service \
+                           /etc/systemd/system/rsyslog.service; do
+                [ -r "$cs_unit" ] || continue
                 cs_u=$(sed -n 's/^[[:space:]]*User=\([A-Za-z0-9_-]*\).*/\1/p' \
                         "$cs_unit" | tail -1)
                 [ -n "$cs_u" ] && CS_LOG_USER="$cs_u"
-            fi
-        done
-        # No readable unit does not mean rsyslog is root -- SysVinit, or a unit
-        # installed somewhere else. The running process is the authority when
-        # there is one, and root is the fallback when there is neither.
-        if [ "$CS_UNIT_READ" = 0 ]; then
-            cs_p=$(ps -C rsyslogd -o user= 2>/dev/null | head -1 | tr -d ' ')
-            [ -n "$cs_p" ] && CS_LOG_USER="$cs_p"
+            done
         fi
+        if [ -z "$CS_LOG_USER" ] && [ -r /etc/rsyslog.conf ]; then
+            cs_u=$(sed -n \
+                's/^[[:space:]]*\$PrivDropToUser[[:space:]]\{1,\}\([A-Za-z0-9_-]*\).*/\1/p' \
+                /etc/rsyslog.conf | tail -1)
+            [ -n "$cs_u" ] && CS_LOG_USER="$cs_u"
+        fi
+
+        [ -n "$CS_LOG_USER" ] || CS_LOG_USER=root
         id -u "$CS_LOG_USER" >/dev/null 2>&1 || CS_LOG_USER=root
 
         CS_LOG_GROUP=$(stat -c '%G' /var/log 2>/dev/null || echo root)

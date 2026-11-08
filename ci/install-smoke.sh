@@ -278,16 +278,25 @@ grp=$(stat -c '%G' "$LOG")
 # Owner and group are derived from the HOST here, not from install.sh. Reusing
 # install.sh's answer would have the test agree with the installer's mistakes;
 # deriving it independently is what makes the assertion a check.
-want_user=root
-for unit in /lib/systemd/system/rsyslog.service /etc/systemd/system/rsyslog.service; do
-    [ -r "$unit" ] || continue
-    u=$(sed -n 's/^[[:space:]]*User=\([A-Za-z0-9_-]*\).*/\1/p' "$unit" | tail -1)
-    [ -n "$u" ] && want_user="$u"
-done
-if [ "$want_user" = root ]; then
-    p=$(ps -C rsyslogd -o user= 2>/dev/null | head -1 | tr -d ' ')
-    [ -n "$p" ] && want_user="$p"
+# Ground truth first: the account the running daemon actually has. Ubuntu drops
+# privileges via $PrivDropToUser in rsyslog.conf and its unit carries no User=, so
+# a unit-only reading answers "root" on exactly the distro that matters.
+want_user=""
+cs_p=$(ps -C rsyslogd -o user= 2>/dev/null | head -1 | tr -d ' ')
+[ -n "$cs_p" ] && want_user="$cs_p"
+if [ -z "$want_user" ]; then
+    for unit in /lib/systemd/system/rsyslog.service /etc/systemd/system/rsyslog.service; do
+        [ -r "$unit" ] || continue
+        u=$(sed -n 's/^[[:space:]]*User=\([A-Za-z0-9_-]*\).*/\1/p' "$unit" | tail -1)
+        [ -n "$u" ] && want_user="$u"
+    done
 fi
+if [ -z "$want_user" ] && [ -r /etc/rsyslog.conf ]; then
+    u=$(sed -n 's/^[[:space:]]*\$PrivDropToUser[[:space:]]\{1,\}\([A-Za-z0-9_-]*\).*/\1/p' \
+            /etc/rsyslog.conf | tail -1)
+    [ -n "$u" ] && want_user="$u"
+fi
+[ -n "$want_user" ] || want_user=root
 want_group=$(stat -c '%G' /var/log)
 
 # The group is not cosmetic. logrotate will not rotate a file in a group-writable
@@ -337,8 +346,45 @@ else
     # Not -v: it emits dozens of "Creating new state" lines that bury the point.
     # Whether the rotation happened is proven below by $LOG.1 existing, which is
     # evidence rather than narration.
-    logrotate -f /etc/logrotate.d/cmdscribe >/tmp/rot.out 2>&1 \
-        || { sed 's/^/     /' /tmp/rot.out; die "logrotate exited non-zero"; }
+    ROT_TESTED=1
+    if ! logrotate -f /etc/logrotate.d/cmdscribe >/tmp/rot.out 2>&1; then
+        sed 's/^/     /' /tmp/rot.out
+
+        # CONTROL, because the refusal alone does not tell you who is wrong.
+        # logrotate rejects every file under a directory that is group-writable by
+        # a non-root group, and it says so about the DIRECTORY while you are reading
+        # it as a verdict on your config. So: ask it to inspect the distribution's
+        # own log config on the same machine. If it refuses that too, the refusal is
+        # a property of the machine and asserting on it would be asserting on the
+        # test rig.
+        #
+        # -d is a dry run. It reports without rotating anything belonging to the
+        # host, which is the only ethical thing to do with someone's syslog.
+        for distro_cfg in /etc/logrotate.d/rsyslog /etc/logrotate.d/syslog; do
+            [ -r "$distro_cfg" ] || continue
+            if logrotate -d "$distro_cfg" 2>&1 | grep -q "insecure permissions"; then
+                printf '\n   ============================================================\n'
+                printf '   SKIP: rotation not enforced on this machine.\n'
+                printf '         logrotate refuses %s\n' "$distro_cfg"
+                printf '         -- the own config of the distribution -- with the\n'
+                printf '         identical error, so the objection is to /var/log itself,\n'
+                printf '         which here is %s. logrotate rejects everything under a\n' "$(stat -c '%a %U:%G' /var/log)"
+                printf '         directory that is group-writable by a non-root group, and\n'
+                printf '         no `create` line can change that.\n'
+                printf '         Whether stock Ubuntu has the same /var/log is NOT established.\n'
+                printf '         SECURITY.md limitation 9 carries the open question.\n'
+                printf '   ============================================================\n'
+                SKIPPED=$(( ${SKIPPED:-0} + 1 ))
+                ROT_TESTED=0
+                break
+            fi
+        done
+        if [ "$ROT_TESTED" = 1 ]; then
+            die "logrotate rejected cmdscribe's config while the distribution's own was accepted"
+        fi
+    fi
+
+    if [ "$ROT_TESTED" = 1 ]; then
 
     # Prove the rotation really happened. With `create` and `delaycompress` the
     # previous file must now exist as $LOG.1. If it does not, nothing rotated and
@@ -376,6 +422,7 @@ else
         die "logging STOPPED at rotation: a command typed after rotation was not recorded"
     fi
     printf '   captured through rotation: %s\n' "$MARK2"
+    fi
 fi
 
 step "8. uninstall must remove the tool and KEEP the evidence"
