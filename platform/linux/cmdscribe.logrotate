@@ -21,4 +21,23 @@
     notifempty
     compress
     delaycompress
+
+    postrotate
+        # rsyslog keeps writing to the rotated inode until something tells it to
+        # reopen. Nothing else fixes it. Measured on Ubuntu 24.04: without this
+        # stanza the post-rotation record landed in cmdscribe.log.1, rsyslog's fd
+        # stayed pinned to that inode, and the live log held zero records forever
+        # -- the host looks instrumented and records nothing. rsyslog does poll
+        # for rotation, but relying on a poll interval to notice that an auditing
+        # tool has stopped auditing is not a design, it is a coincidence.
+        if [ -x /usr/lib/rsyslog/rsyslog-rotate ]; then
+            /usr/lib/rsyslog/rsyslog-rotate
+        elif command -v systemctl >/dev/null 2>&1; then
+            systemctl kill -s HUP rsyslog.service >/dev/null 2>&1 || true
+        elif [ -r /run/rsyslogd.pid ]; then
+            kill -HUP "$(cat /run/rsyslogd.pid)" >/dev/null 2>&1 || true
+        elif [ -r /var/run/rsyslogd.pid ]; then
+            kill -HUP "$(cat /var/run/rsyslogd.pid)" >/dev/null 2>&1 || true
+        fi
+    endscript
 }

@@ -211,28 +211,43 @@ person. If you need a support commitment, this is not that.
    out of a mutable list and can lose a session's first command without the log
    saying so. The kernel layer sees the `execve` either way.
 
-9. **Rotation is tested now, and verified on Debian only.** It was the
-   highest-consequence untested path in the product: the logrotate config had no
-   postrotate and no copytruncate, and the owner it created was hardcoded.
+9. **Rotation silently killed logging on every distro, one week after install.
+   Fixed, and verified with a negative control on two hosts.**
 
-   Fixed — owner and group are derived per the section above. Verified on Debian
-   13 by forcing a real rotation and capturing afterwards: logrotate renames the
-   file, creates a fresh 0600 one, rsyslog notices the inode change on its own, and
-   the next command is recorded.
+   The logrotate stanza had no `postrotate` and no `copytruncate`. Nothing ever
+   told rsyslog to reopen the log, so after the first rotation rsyslog kept
+   writing to the rotated inode and the live file stayed empty **permanently**.
+   The stanza said `weekly`, so on every host that installed this before today,
+   auditing stopped seven days later and nothing anywhere reported it. The host
+   keeps looking instrumented. This is the most serious defect found in this
+   project, and it survived every test that existed because no test rotated a log.
 
-   **Not verified end to end on a real Ubuntu host**, where rsyslog runs
-   unprivileged. The old config's failure mode follows mechanically from the
-   ownership — logrotate creates a `root:root 0600` file an unprivileged rsyslog
-   cannot reopen, so logging stops at the first rotation — but nobody has watched
-   it happen. `logrotate -f /etc/logrotate.d/cmdscribe` followed by one command, on
-   an Ubuntu VM, closes it.
+   Measured, not inferred. Ubuntu 24.04 LTS: after rotation, `rsyslogd` held fd 9
+   pinned to `cmdscribe.log.1`, the post-rotation marker appeared in `.1`, and the
+   live log held zero records. Debian 13: identical. Adding a `postrotate` that
+   sends rsyslog `HUP` makes the marker land in the live log on both. Removing it
+   again — the negative control, run on both hosts — reproduces the dead log. So
+   the stanza is what fixes it and the test is what detects it.
 
-   GitHub's runner cannot answer this. Logrotate there refuses to rotate anything
-   under `/var/log`, **including the distribution's own rsyslog config**, because
-   that image's `/var/log` is `0775 root:syslog` and logrotate objects to
-   group-writable directories whose group is not root. The test establishes this
-   with a dry-run control against the distro config, then skips loudly rather than
-   failing cmdscribe for the state of the rig. That control is the reason the claim
-   above is phrased as mechanics-plus-gap rather than as a confirmed Ubuntu
-   failure: an earlier version of this file asserted the failure as fact on evidence
-   that turned out to describe a test machine.
+   **Debian's earlier green was luck.** An earlier version of this suite reported
+   "captured through rotation" on Debian while the same defect was present,
+   because it asserted on a file rsyslog was still writing to rather than on the
+   file that would exist next week. A test that passes on a broken system is worse
+   than no test, and this one was shipped.
+
+   Two things that looked like the bug and were not:
+
+   - `fileOwner`/`create` set to `root:root` on Ubuntu, where rsyslog runs as
+     `syslog`. Real, and separately fixed by deriving the owner — but rotation
+     still died with the owner fixed and no `postrotate`.
+   - logrotate's "parent directory has insecure permissions" refusal. On Ubuntu
+     `/var/log` is `0775 root:syslog` and logrotate refuses every snippet invoked
+     directly, **including the distro's own**, which is what a control in CI
+     observed. The reason it is not a problem in production is that Ubuntu's
+     `/etc/logrotate.conf` carries a global `su root adm` and the production
+     command is `logrotate /etc/logrotate.conf`, which includes the snippets and
+     applies it. Testing the snippet standalone tests the wrong command line; the
+     suite now reproduces the real one. That control was run as root and reported
+     accurately — the error was interpreting "the distro's own config fails too"
+     as exoneration instead of as a sign the harness was invoking something the
+     distro never invokes.

@@ -346,8 +346,22 @@ else
     # Not -v: it emits dozens of "Creating new state" lines that bury the point.
     # Whether the rotation happened is proven below by $LOG.1 existing, which is
     # evidence rather than narration.
+    # logrotate runs in production as `logrotate /etc/logrotate.conf`, which
+    # INCLUDES this snippet and applies the global directives above it. Ubuntu
+    # depends on exactly that: /var/log is 0775 root:syslog there, and the global
+    # `su root adm` in /etc/logrotate.conf is the only reason logrotate will
+    # rotate anything in that directory at all.
+    #
+    # Invoking the snippet on its own -- which an earlier version of this step
+    # did, and then misread the result of -- withholds that directive, and
+    # logrotate then refuses every log in /var/log including the distro's own.
+    # That is a property of the wrong command line. Reproduce the real one.
+    ROTCFG=/tmp/cmdscribe-rot-test.conf
+    { grep -E '^[[:space:]]*(su|olddir|dateext)' /etc/logrotate.conf 2>/dev/null || true
+        cat /etc/logrotate.d/cmdscribe; } > "$ROTCFG"
+
     ROT_TESTED=1
-    if ! logrotate -f /etc/logrotate.d/cmdscribe >/tmp/rot.out 2>&1; then
+    if ! logrotate -f "$ROTCFG" >/tmp/rot.out 2>&1; then
         sed 's/^/     /' /tmp/rot.out
 
         # CONTROL, because the refusal alone does not tell you who is wrong.
@@ -367,12 +381,12 @@ else
                 printf '   SKIP: rotation not enforced on this machine.\n'
                 printf '         logrotate refuses %s\n' "$distro_cfg"
                 printf '         -- the own config of the distribution -- with the\n'
-                printf '         identical error, so the objection is to /var/log itself,\n'
-                printf '         which here is %s. logrotate rejects everything under a\n' "$(stat -c '%a %U:%G' /var/log)"
-                printf '         directory that is group-writable by a non-root group, and\n'
-                printf '         no `create` line can change that.\n'
-                printf '         Whether stock Ubuntu has the same /var/log is NOT established.\n'
-                printf '         SECURITY.md limitation 9 carries the open question.\n'
+                printf '         identical error. So the logrotate setup on this machine\n'
+                printf '         rejects these snippets for a reason unrelated to\n'
+                printf '         cmdscribe: /var/log here is %s.\n' "$(stat -c '%a %U:%G' /var/log)"
+                printf '         Note that Ubuntu rotates this same directory in production\n'
+                printf '         via the global `su` in /etc/logrotate.conf, which this\n'
+                printf '         harness has already tried to inherit above.\n'
                 printf '   ============================================================\n'
                 SKIPPED=$(( ${SKIPPED:-0} + 1 ))
                 ROT_TESTED=0
