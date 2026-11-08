@@ -363,15 +363,41 @@ case "$OS" in
 esac
 
 # ---- 4. optional auditd -------------------------------------------- #
-if [ "$WITH_AUDITD" = 1 ] && [ "$OS" = Linux ] && command -v augenrules >/dev/null 2>&1; then
+if [ "$WITH_AUDITD" = 1 ] && [ "$OS" = Linux ]; then
+    # Requesting --auditd and silently not getting it is the exact failure shape
+    # this project keeps tripping over. Measured: on a Debian 13 host with no
+    # audit package installed at all, install.sh --auditd printed nothing about
+    # audit, said "done.", and exited 0. The operator walks away believing the
+    # tamper-evident layer is running. It is not running, and nothing says so.
+    if ! command -v augenrules >/dev/null 2>&1; then
+        note ""
+        note "ERROR: --auditd was requested but the audit tooling is not installed."
+        note "The kernel layer is NOT active on this host. You have the shell layer only."
+        note ""
+        note "  Debian/Ubuntu:  apt-get install auditd audisp2"
+        note "  RHEL/Fedora:    dnf install audit"
+        note "  openSUSE:       zypper install audit"
+        note ""
+        note "Then re-run this installer. Nothing here is half-configured: the shell"
+        note "layer is installed and working, and no audit rules were written."
+        exit 1
+    fi
+
     install -m 0640 -o root -g root \
         "$SRC/platform/linux/cmdscribe.rules" /etc/audit/rules.d/cmdscribe.rules
     rec R /etc/audit/rules.d/cmdscribe.rules
-    if augenrules --load; then
-        note "loaded auditd rules"
-    else
-        note "augenrules --load failed; rules installed but not active"
+    if ! augenrules --load; then
+        # Rules on disk that are not loaded are not protection. This used to be a
+        # note and the install still reported success.
+        note ""
+        note "ERROR: augenrules --load FAILED. The rules are on disk but INACTIVE,"
+        note "which means the kernel layer is not recording anything. This is not a"
+        note "warning: verify with 'auditctl -l | grep cmd' before trusting this host."
+        note "Common causes: auditing disabled at boot (audit=0), an immutable audit"
+        note "policy (-e 2) already loaded, or auditd not running."
+        exit 1
     fi
+    note "loaded auditd rules: $(auditctl -l 2>/dev/null | grep -c 'key=cmd') cmdscribe syscalls tracked"
     note "check pam_loginuid or auid is worthless:"
     note "  grep -l pam_loginuid /etc/pam.d/sshd /etc/pam.d/login"
 fi

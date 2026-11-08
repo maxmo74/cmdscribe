@@ -5,6 +5,9 @@
 # tamper-proof attribution (auid) and guarding the shell hook itself.
 #
 # Deploy with: augenrules --load   (or: service auditd restart)
+#
+# The filters below were measured on Ubuntu 24.04, not copied from a template.
+# Each one is load-bearing, and the comments say which way it fails.
 
 -D
 -b 8192
@@ -13,16 +16,46 @@
 # Every execve traceable to a human login. auid is stamped at login by
 # pam_loginuid and is immutable for the session -- including across
 # sudo, su - and pkexec. That is the only attribution that cannot be
-# argued with. auid=unset (4294967295) is boot-time daemons: skipped.
--a exit,always -F arch=b64 -S execve -F auid>=1000 -F auid!=unset -k cmd
--a exit,always -F arch=b64 -S execve -F auid=0                    -k cmd_root
--a exit,always -F arch=b32 -S execve -F auid>=1000 -F auid!=unset -k cmd
+# argued with. auid=unset is boot-time daemons: skipped.
+#
+# There is deliberately NO `auid>=1000` floor here. That filter is the usual
+# incantation and it silently excludes every interactive user whose uid is below
+# 1000. Measured on a host whose only human user has uid 501 (macOS-mapped, which
+# is what Lima does and what NFS, LDAP and macOS-integrated fleets do too): the
+# rule loaded, `auditctl -l` showed it, auditd ran, the kernel emitted records for
+# the same user under other rules -- and `ausearch -k cmd` returned nothing. Not
+# an error. An absence. In an auditing tool that is the worst possible failure,
+# because "no records" reads as "nothing happened" rather than "we filtered them
+# out". Accounts below 1000 are not exotic: RHEL <=6 put the first user at 500,
+# and directory-backed fleets assign whatever they assign.
+#
+# If the volume is too high on a busy host, raise a floor DELIBERATELY and record
+# that you did. Narrowing coverage should be a decision with a name on it, not a
+# side effect of a copied rule.
+-a exit,always -F arch=b64 -S execve                  -F auid!=unset -F auid!=0 -k cmd
+-a exit,always -F arch=b64 -S execve                  -F auid=0                   -k cmd_root
+-a exit,always -F arch=b32 -S execve                  -F auid!=unset -F auid!=0 -k cmd
+
+# execve as well as execve. The shipped rules used to cover only execve, and
+# execveat is not theoretical: /bin/true on this host produced an execveat record
+# while no execve rule matched it. Anything reaching for a binary by file
+# descriptor (fexecve, some loaders, some container runtimes) was invisible to the
+# layer whose purpose is to see what the shell layer cannot.
+-a exit,always -F arch=b64 -S execveat                -F auid!=unset -F auid!=0 -k cmd
+-a exit,always -F arch=b64 -S execveat                -F auid=0                   -k cmd_root
+-a exit,always -F arch=b32 -S execveat                -F auid!=unset -F auid!=0 -k cmd
 
 # auditd watches the layer that is trivial to disable.
 -w /usr/share/cmdscribe        -p wa -k cmdscribe_tamper
 -w /etc/rsyslog.d/10-cmdscribe.conf -p wa -k cmdscribe_tamper
 -w /var/log/cmdscribe.log      -p wa -k cmdscribe_tamper
 -w /etc/audit/rules.d          -p wa -k audit_tamper
+
+# Note on the log watch, measured rather than assumed: rsyslog opens the log once
+# and appends through that descriptor, so ordinary writes do NOT generate events
+# here -- which is good, because one audit record per logged command would bury
+# the signal. What does fire is anything opening the file for writing: truncation,
+# an editor, a `> file` redirect. That is the tamper event worth having.
 
 # Common escalation paths and the files this project exists to catch.
 -w /etc/sudoers                -p wa -k sudoers

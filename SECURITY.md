@@ -141,6 +141,60 @@ with `0600`.
 If you need redaction, make it fail *loudly*: log the match, keep the
 original in a `0600` file, and alert.
 
+10. **The kernel layer was never verified until v0.0.5, and three defects were
+    found the first time it ran on a real host.** It had never been deployed
+    anywhere — `auditctl -l` on the only production host returned zero
+    cmdscribe rules, and zero execve events had ever been captured. Everything
+    this file says about "the kernel layer sees the `execve` regardless" was,
+    until recently, a claim about code that had not executed.
+
+    Found and fixed:
+
+    - **`-F auid>=1000` silently excluded users.** The usual incantation, and on
+      a host whose only human account has uid 501 (macOS-mapped — which is what
+      Lima, NFS, LDAP and macOS-integrated fleets produce) it matched *nothing*.
+      The rule loaded, `auditctl -l` showed it, auditd was running, and the same
+      user generated records under other rules. `ausearch` returned nothing. Not
+      an error — an absence, which in an auditing tool is the worst possible
+      output because it reads as "nobody did anything". The floor is gone;
+      narrowing coverage now has to be a deliberate, named decision.
+    - **`execveat` was not covered at all.** `/bin/true` on that host produced an
+      `execveat` record no rule matched. Added for both arch variants.
+    - **`--auditd` silently did nothing when the audit package was absent.**
+      Measured on Debian 13 with no `audit` installed: the installer printed
+      nothing about audit, said `done.`, and exited 0. It now fails loudly with
+      the install command for each distro and states that only the shell layer is
+      active. Same treatment for `augenrules --load` failing, which used to be a
+      note: rules on disk that are not loaded are not protection.
+
+    Still true, and load-bearing for `cmdscribe-reconcile`:
+
+    - **`ausearch` cannot be trusted as the interface.** On the Ubuntu 24.04 test
+      host, `ausearch -k cmd` returned `<no matches>` with exit 1 — for every key,
+      every `--uid`, every message type, with `-ts all`, and even with `--file`
+      pointed directly at the log — while the raw log held 391 records carrying
+      `key="cmd"`. A reconciler built on `ausearch` would conclude the kernel layer
+      saw nothing and report the shell layer as lying. **`reconcile` must parse
+      `/var/log/audit/audit.log` directly**, including rotated segments.
+    - **`arch=` and syscall numbers are architecture-specific.** Records carry
+      `arch=c00000b7` (aarch64) with `syscall=221` for execve; x86_64 differs on
+      both. Any mapping from syscall number to name has to read `arch` from the
+      record rather than assume a table.
+    - **`-w /var/log/cmdscribe.log -p wa` does not fire on ordinary writes.**
+      rsyslog opens the log once and appends through that descriptor, so normal
+      logging produces no tamper events — which is the right outcome, since one
+      audit record per logged command would bury the signal. What does fire is
+      anything *opening* the file for writing: truncation, an editor, `> file`.
+    - **`-D` in the rules file did not delete a pre-existing site rule** in
+      testing, including one whose filename sorts before ours. Measured once, on
+      one host; not a proof, and audit rule ordering is subtle enough that a host
+      with real site rules should be checked with `auditctl -l` after installing.
+    - **`loginuid_immutable` was `0 unlocked`** on the test host. Making the audit
+      configuration immutable (`-e 2`) is the single biggest strengthening of the
+      tamper-evident claim, and it is deliberately *not* the default: it makes the
+      rules unloadable until reboot, which is an operational decision for the
+      operator, not an installer default.
+
 ## Reporting a vulnerability
 
 Open a GitHub issue for anything that is already publicly visible in the
