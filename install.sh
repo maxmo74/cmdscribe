@@ -306,7 +306,7 @@ case "$OS" in
         #     against the rule this tool otherwise keeps without exception:
         #     uninstall removes the tool and keeps the log.
         #   - its failure mode is silent. It did exactly that, on every host,
-        #     for the whole life of this project. SECURITY.md limitation 9.
+        #     for the whole life of this project. See CHANGELOG 0.0.4.
         #   - it fragments evidence across a compressed chain, which is worse for
         #     reconstruction rather than better.
         #

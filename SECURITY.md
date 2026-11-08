@@ -2,322 +2,99 @@
 
 ## Threat model
 
-cmdscribe is an **accountability** tool. It answers "who did what on this
-machine, and can I defend that answer?" It is not an intrusion prevention
-tool and it does not stop anything.
+cmdscribe is an **accountability** tool. It answers "who did what on this machine, and can I defend that answer?" It prevents nothing. Assume the attacker already has a shell.
 
-Assume the attacker already has a shell.
-
-### Who this does defeat
+**Defeats:**
 
 | Adversary | Why it fails |
 |---|---|
-| Casual local user poking at `/root` | recorded, with attribution |
-| Someone who `history -c` and leaves | the shell layer already shipped the record; auditd has it independently |
-| Someone who unsets `PROMPT_COMMAND` mid-session | auditd still records every `execve` with an immutable `auid`; the gap shows up as a `silent-shell` discrepancy |
-| Someone who edits the hook to hide future sessions | `cmdscribe_tamper` watches on `/usr/share/cmdscribe`, `/etc/rsyslog.d/`, `/etc/audit/rules.d` |
+| Casual local user poking at things they shouldn't | recorded, with attribution |
+| Someone who runs `history -c` and leaves | the record was already written; auditd has it independently |
+| Someone who unsets `PROMPT_COMMAND` mid-session | auditd still records every `execve` with an immutable `auid` |
+| Someone who edits the hook to hide future sessions | auditd watches on `/usr/share/cmdscribe`, `/etc/rsyslog.d/`, `/etc/audit/rules.d` |
 
-### Who this does not defeat
+**Does not defeat:**
 
 | Adversary | Why |
 |---|---|
-| root, today | root can `auditctl -e 0`, `> /var/log/cmdscribe.log`, unload modules. `-e 2` freezes rules until reboot and is the only real mitigation — and it costs you live rule changes and fast incident response |
-| root with physical access, or reboot rights | can boot with `audit=0`, or simply drop the disk |
-| anyone, for a kernel exploit | no auditd on the planet helps |
-| anything on a container/host you do not control | the shell layer may work; auditd almost certainly will not |
+| root, today | root can `auditctl -e 0` or truncate the log. `-e 2` freezes rules until reboot — the only real mitigation, and it costs you live rule changes |
+| root with physical access or reboot rights | can boot with `audit=0`, or take the disk |
+| a kernel exploit | nothing here helps |
+| a container or host you do not control | the shell layer may work; auditd almost certainly will not |
 
-**The honest summary:** this raises the cost of misuse by people with
-legitimate accounts, and gives you a defensible record after the fact. It
-does not contain a determined root. Anyone telling you otherwise is
-selling something.
+**In short:** this raises the cost of misuse by people with legitimate accounts and gives you a defensible record afterwards. It does not contain a determined root. Anyone telling you otherwise is selling something.
 
-## Ship it off-box, or the log is not evidence
+## Report a vulnerability
 
-A local-only log is the first thing anyone with a shell deletes. The
-rsyslog config has a commented `omfwd` block — uncomment it. TLS, and a
-collector you do not hand the attacker credentials to.
+- **GitHub issue** for anything already visible in the design (e.g. "the shell layer can be disabled").
+- **Private security advisory** for anything that would help an attacker before a fix ships.
 
-If the collector is on the same network as the fleet, an attacker who owns
-one box may own the collector too. Put it on a separate trust boundary.
+Pre-1.0, maintained by one person: no embargo process, no bounty, no SLA. If you need a support commitment, this is not that project.
+
+## Handling of secrets
+
+**Both layers record argv.** There is no redaction, deliberately: patterns like `--password=.*` also match legitimate SQL and internal tokens, and a redactor that silently over-matches produces an audit log with holes in it — worse than one that is honest about containing secrets.
+
+```
+mysql -pHunter2 prod        # recorded, both layers
+cat /root/.ssh/id_rsa       # recorded (the command, not the key)
+mysql -p                    # not recorded; typed at a prompt
+```
+
+Policy, not code: **never put secrets in argv.** Use `--defaults-extra-file`, `--password-from-stdin`, a vault CLI, or a `0600` env file.
+
+If you do need redaction, make it fail loudly: log the match, keep the original in a `0600` file, alert.
 
 ## File permissions
 
-This is the most common real-world failure of this class of tool, and it
-is worth stating bluntly:
+> A log of typed commands contains **credentials, private keys and pasted secrets** — people run `cat id_rsa`, `cat auth.json`, and `mysql -pSecret` in interactive shells. A world-readable command log is a credential disclosure on every host that has one.
 
-> Logs of typed commands contain **credentials, private keys, and pasted
-> secrets** — people run `cat id_rsa`, `cat auth.json`, and
-> `mysql -pSecret` inside an interactive shell. A world-readable command
-> log is a credential disclosure on every host you run it on.
-
-Enforced everywhere the log can be created:
+Enforced wherever the log can be created:
 
 - rsyslog: `fileCreateMode="0600"`, `dirCreateMode="0700"`
-- logrotate, **if you opt into rotation with `--rotate`**: `create 0600`, with the
-  owner derived from the host rather than hardcoded to `root root` — see the next
-  section. The default install writes no logrotate config at all, so there is no
-  second creation path to get wrong.
+- logrotate, if you opt in with `--rotate`: `create 0600`, owner derived from the host
 - newsyslog (BSD): mode field `0600`
 
-The mode is asserted unconditionally in CI on every push, on both Linux and macOS.
+The mode is asserted in CI on every push, on Linux and macOS.
 
-`make check` does not cover this; `tests/integration.sh` asserts the mode
-on an installed host. Verified on Debian 13: the log lands `0600
-root:root`, and `sudo -u nobody cat` gets `Permission denied`.
+**The log's owner is derived from the host, not hardcoded.** The installer determines the account rsyslog actually runs as (running process → unit `User=` → `$PrivDropToUser` → root) and the group that owns `/var/log`. Hardcoding `root:root` breaks on any distro where rsyslog drops privileges: on Ubuntu that means logrotate creates a rotated file rsyslog cannot reopen, and logging stops at the first rotation with no error anywhere.
 
-### The log's owner is derived, not fixed
-
-install.sh works out the account rsyslog actually runs as — the running process,
-else the unit's `User=`, else `$PrivDropToUser` in `/etc/rsyslog.conf`, else
-root — and the group that owns `/var/log`, then renders both the rsyslog rule and
-the logrotate `create` line from them.
-
-Hardcoding `root:root` was wrong on any distro where rsyslog drops privileges,
-which includes Ubuntu. logrotate runs as root and would create the rotated file
-`root:root 0600`; rsyslog, running as `syslog`, cannot reopen a file it does not
-own, so **logging would stop at the first rotation** and nothing would report it.
-
-On Ubuntu the log is therefore `syslog`-owned, and the consequence for you is
-narrow but real: **the rsyslog service account can read your command log**, and on
-Debian it cannot. Mode stays 0600 in every case, so the group carries no access at
-all — the readers are the owner and root, and no confidentiality was traded to fix
-the rotation bug. If the service account reading your log matters in your
-environment, put the log on a group you control or ship it off-box; the collector
-stanza is in `platform/linux/10-cmdscribe.conf`.
-
-`ci/install-smoke.sh` asserts the mode unconditionally and asserts owner and group
-against values it derives from the host itself, independently of install.sh, so the
-test cannot simply agree with the installer's mistakes.
+Consequence, narrow but real: **on Ubuntu the rsyslog service account can read your command log.** On Debian it cannot. Mode stays `0600` either way, so the group carries no access. If that matters in your environment, ship the log off-box.
 
 ### macOS has none of this protection
 
-On macOS the records go into the **unified log**, which any local user can
-read. Verified from an ordinary uid-501 account: `log show --predicate
-'eventMessage CONTAINS "cmdscribe: login="'` returned every record. There
-is no `0600` to set because there is no file.
+On macOS the records go into the **unified log**, which any local user can read — verified from an ordinary unprivileged account. There is no `0600` to set because there is no file.
 
-So the confidentiality this project has on Linux **does not exist on
-macOS**, and no `fileCreateMode` will fix it. What macOS gets is
-attribution and a record of what ran, not secrecy. Do not put cmdscribe on
-a shared Mac and tell yourself the command history is private.
+macOS cmdscribe therefore gives you attribution and a record of what ran, **not secrecy**. Do not put it on a shared Mac and assume the command history is private. `--logfile` does not fix this: the shell appends that file itself, so the subject of the log can truncate it, and it is `0660 root:admin` — every administrator can read and erase it. Treat it as a convenience copy; the unified log is the record of authority.
 
-There is no asl mitigation, and an earlier version of this document
-recommended one. It does not work -- see below.
+## Ship it off-box, or the log is not evidence
 
-**That mitigation does not work, and was removed as an option.** Tested on
-macOS 27.2: `logger(1)` posts to the unified log and never reaches syslogd's
-asl file routing at all. A rule matching `Facility local0` wrote 41 lines to
-the target file and not one of them was ours. There is no asl
-configuration that produces a cmdscribe file on this macOS.
+A local-only log is the first thing anyone with a shell deletes. The rsyslog config has a commented `omfwd` block in `platform/linux/10-cmdscribe.conf` — uncomment it. Use TLS, and put the collector on a separate trust boundary from the fleet: an attacker who owns one box may otherwise own the collector too.
 
-`./install.sh --logfile` is the alternative, and it is weaker in a specific
-way: the shell appends the file itself, so the subject of the log can
-truncate it. It is created `0660 root:admin`, which on a Mac means every
-administrator can read **and erase** it. Treat it as a convenience copy for
-looking at output. The unified log stays the record of authority — which,
-again, is already world-readable, so the file adds no new exposure, it just
-adds no new protection either.
+## Known limitations
 
-## Secrets in argv are recorded. This is not a bug you can fix.
+1. **`cmdscribe-reconcile` is not implemented.** Until it exists the two layers do not actually cross-check each other, so do not cite this project as evidence of verified coverage.
+2. **`cmdscribe --check` does not exist yet.** Nothing currently tells you whether capture is still working on a host you installed weeks ago. Config-management changes, distro upgrades and package updates can break capture silently. This is the top item on the roadmap.
+3. **A command typed in the first milliseconds of a session can be missed.** The hook is installed by the rc files, so anything run while they are still being read predates it. The window is normally milliseconds; a slow `ssh` connect or a hung `sssd` behind `pam_loginuid` widens it. The kernel layer sees the `execve` regardless.
+4. **The first record written into a newly created log file can be dropped.** Observed on Ubuntu, not on Debian. rsyslog opens the file lazily on first write and the record that triggers the open does not always land, with nothing in the log marking a gap. Not fixed.
+5. **Anyone with a shell can disable the shell layer** (`PROMPT_COMMAND=`). Intended design: that is why the auditd layer exists.
+6. **On macOS there is no tamper-resistant second layer.** Apple's EndpointSecurity API requires an entitlement granted only to approved organisations, so macOS cmdscribe is single-layer.
+7. **`sudo su -` attribution is a heuristic.** It walks `/proc` (or `ps`) for the nearest non-root ancestor uid. It has been verified by hand and is not measured — nobody has counted how often it is right.
+8. **BSD is untested.** `lib/os/bsd.sh` shares the `ps(1)` attribution that passes on macOS and contains nothing Linux-specific, but no BSD has ever executed it.
+9. **Non-interactive shells are not captured** — by design. Cron, `ssh host cmd`, scripts and daemons are invisible to the shell layer. Use `--auditd` on Linux if you need them.
+10. **Rotation is opt-in because its failure mode is silent.** Without a `postrotate` that sends rsyslog `HUP`, rsyslog keeps writing to the rotated inode and the live log stays empty permanently while the host looks instrumented. The default install writes no logrotate config at all. If another config on your host — a distro baseline or a config-management glob — starts matching `/var/log/cmdscribe.log`, it can reintroduce that silent failure, so check after changing anything that touches logrotate.
+11. **`--auditd` requires the `audit` package.** If it is missing the installer now fails and says so; earlier versions reported success without installing any kernel-layer rules. Verify with `sudo auditctl -l | grep cmd` after installing.
 
-Both layers capture argv. Therefore:
+## Verified platforms
 
-```
-mysql -pHunter2 prod          # recorded, both layers
-ansible-vault view secrets    # recorded (the filename, not the contents)
-cat /root/.ssh/id_rsa         # recorded (the command, not the key)
-mysql -p                      # nothing recorded; typed at a prompt
-```
+| | bash | zsh |
+|---|---|---|
+| Debian 13 | tested | tested |
+| Ubuntu 24.04 | tested | tested |
+| macOS | tested (bash 3.2) | tested |
+| other Linux | should work, untested | should work, untested |
+| BSD | should work, untested | should work, untested |
 
-There is **no redaction in v1**, deliberately. Patterns such as
-`--password=.*` also match legitimate SQL and internal tokens, and a
-redactor that silently over-matches produces an audit log with holes in
-it — worse than one that is honest about containing secrets.
+macOS install paths are verified manually rather than in CI; the CI matrix on `macos-latest` exercises capture, not the installer.
 
-Policy instead of code: **never put secrets in argv.** Use
-`--defaults-extra-file`, `--password-from-stdin`, vault CLI, env files
-with `0600`.
-
-If you need redaction, make it fail *loudly*: log the match, keep the
-original in a `0600` file, and alert.
-
-10. **The kernel layer was never verified until v0.0.5, and three defects were
-    found the first time it ran on a real host.** It had never been deployed
-    anywhere — `auditctl -l` on the only production host returned zero
-    cmdscribe rules, and zero execve events had ever been captured. Everything
-    this file says about "the kernel layer sees the `execve` regardless" was,
-    until recently, a claim about code that had not executed.
-
-    Found and fixed:
-
-    - **`-F auid>=1000` silently excluded users.** The usual incantation, and on
-      a host whose only human account has uid 501 (macOS-mapped — which is what
-      Lima, NFS, LDAP and macOS-integrated fleets produce) it matched *nothing*.
-      The rule loaded, `auditctl -l` showed it, auditd was running, and the same
-      user generated records under other rules. `ausearch` returned nothing. Not
-      an error — an absence, which in an auditing tool is the worst possible
-      output because it reads as "nobody did anything". The floor is gone;
-      narrowing coverage now has to be a deliberate, named decision.
-    - **`execveat` was not covered at all.** `/bin/true` on that host produced an
-      `execveat` record no rule matched. Added for both arch variants.
-    - **`--auditd` silently did nothing when the audit package was absent.**
-      Measured on Debian 13 with no `audit` installed: the installer printed
-      nothing about audit, said `done.`, and exited 0. It now fails loudly with
-      the install command for each distro and states that only the shell layer is
-      active. Same treatment for `augenrules --load` failing, which used to be a
-      note: rules on disk that are not loaded are not protection.
-
-    Still true, and load-bearing for `cmdscribe-reconcile`:
-
-    - **`ausearch` cannot be trusted as the interface.** On the Ubuntu 24.04 test
-      host, `ausearch -k cmd` returned `<no matches>` with exit 1 — for every key,
-      every `--uid`, every message type, with `-ts all`, and even with `--file`
-      pointed directly at the log — while the raw log held 391 records carrying
-      `key="cmd"`. A reconciler built on `ausearch` would conclude the kernel layer
-      saw nothing and report the shell layer as lying. **`reconcile` must parse
-      `/var/log/audit/audit.log` directly**, including rotated segments.
-    - **`arch=` and syscall numbers are architecture-specific.** Records carry
-      `arch=c00000b7` (aarch64) with `syscall=221` for execve; x86_64 differs on
-      both. Any mapping from syscall number to name has to read `arch` from the
-      record rather than assume a table.
-    - **`-w /var/log/cmdscribe.log -p wa` does not fire on ordinary writes.**
-      rsyslog opens the log once and appends through that descriptor, so normal
-      logging produces no tamper events — which is the right outcome, since one
-      audit record per logged command would bury the signal. What does fire is
-      anything *opening* the file for writing: truncation, an editor, `> file`.
-    - **`-D` in the rules file did not delete a pre-existing site rule** in
-      testing, including one whose filename sorts before ours. Measured once, on
-      one host; not a proof, and audit rule ordering is subtle enough that a host
-      with real site rules should be checked with `auditctl -l` after installing.
-    - **`loginuid_immutable` was `0 unlocked`** on the test host. Making the audit
-      configuration immutable (`-e 2`) is the single biggest strengthening of the
-      tamper-evident claim, and it is deliberately *not* the default: it makes the
-      rules unloadable until reboot, which is an operational decision for the
-      operator, not an installer default.
-
-## Reporting a vulnerability
-
-Open a GitHub issue for anything that is already publicly visible in the
-design (e.g. "the shell layer can be disabled"). For anything that would
-help an attacker before the fix ships, use a private security advisory.
-
-No embargo, no bounty, no formal SLA — this is a pre-1.0 project by one
-person. If you need a support commitment, this is not that.
-
-## Known limitations, stated plainly
-
-1. `cmdscribe-reconcile` is a **specification, not code**. Until it
-   exists, the two layers do not actually cross-check each other and the
-   "self-verifying" claim is aspirational. Do not cite this project as
-   evidence of coverage until that tool ships.
-2. `lib/os/bsd.sh` **should work and has never been run**. It shares the
-   `ps(1)` attribution approach that passes on macOS and contains nothing
-   Linux-specific, but "should" is doing all the work in that sentence.
-3. Attribution through `sudo su -` is **verified by hand, not by the
-   automated suite**. `capture/zsh.zsh` and `capture/bash.sh` are each
-   verified on Linux and macOS; `os/bsd.sh` is verified on nothing.
-4. On macOS there is **no tamper-resistant second layer**. Apple's
-   EndpointSecurity API requires an entitlement granted only to approved
-   organisations. macOS cmdscribe is single-layer and therefore weaker
-   than the Linux version, whatever the platform marketing says.
-5. The `sudo su -` attribution heuristic is unmeasured. It has been
-   observed to work; nobody has counted how often it is right.
-6. A command typed **before the shell finishes starting up can be missed**.
-   The hook is installed by the rc files, so anything executed while they are
-   still being read predates the hook. This is not hypothetical: the test
-   harness slept a fixed 0.5s after forking and then typed, and on a loaded
-   GitHub Actions runner the first command of the session was lost every time
-   while a quiet Debian box never showed it — the signature of a race, not of
-   a product defect, but the product defect is the same one. A human typing
-   during a slow `ssh` connect is in exactly this window. It is milliseconds
-   wide and not zero, and anyone who can slow shell startup — a hung `sssd`
-   behind `pam_loginuid`, a dead NFS mount holding up `/etc/profile` — can
-   widen it at will. The shell layer cannot close this by construction; the
-   kernel layer sees the `execve` regardless, which is the honest argument for
-   running both.
-7. **A bash session could previously record a command it never ran.** The hook
-   read the typed line with `history 1`, and at a session's first prompt that
-   can still be the last line loaded from `HISTFILE` — a command from some
-   *earlier* session — written out with this session's pid, tty and timestamp.
-   Observed directly in CI: a session recorded `exit`, which it cannot have
-   run, because `exit` ends the shell before `PROMPT_COMMAND` fires. A missing
-   record loses information; this one manufactured it.
-
-   Fixed by seeding a history-number baseline at the first prompt and emitting
-   nothing at it; entries at or below the baseline are not attributed to this
-   session. `ci/install-smoke.sh` step 3c is the regression test — it plants a
-   canary line in `HISTFILE` that the session never types and fails if that
-   canary ever appears in the session's records. Note the earlier attempt at
-   this seeded the baseline at *install* time, which is inside `/etc/profile.d`
-   and therefore before bash has read `HISTFILE`: always 0, suppressing nothing.
-   A fix that passes review and does nothing is still a fix that does nothing.
-8. **The first record written into a newly created log file can be silently
-   dropped.** Seen on Ubuntu runners; Debian does not show it. rsyslog opens the
-   file lazily on first write and the record that triggers the open does not
-   always land, so the first command after install — and the first command after
-   anything recreates the file — may simply be absent, with nothing in the log
-   marking a gap.
-
-   `ci/install-smoke.sh` now warms the file before probing, which is why the
-   suite is green; **the underlying behaviour is not fixed.** The mechanism is
-   not fully established. What is known, because each of these was tested: it is
-   not the shell hook (no change to it moved the behaviour, across four commits
-   that assumed otherwise), not the inherited environment (scrubbing changed
-   nothing), and not bash history state — creating the file first makes it
-   disappear entirely, which is the only thing that has.
-
-   The general lesson is in `history` anyway: the bash layer reads the typed line
-   out of a mutable list and can lose a session's first command without the log
-   saying so. The kernel layer sees the `execve` either way.
-
-9. **Rotation silently killed logging on every distro, one week after install.
-   Fixed, and verified with a negative control on two hosts. The default is now
-   that nothing rotates the log at all, which removes the failure class rather
-   than fixing one instance of it.**
-
-   The logrotate stanza had no `postrotate` and no `copytruncate`. Nothing ever
-   told rsyslog to reopen the log, so after the first rotation rsyslog kept
-   writing to the rotated inode and the live file stayed empty **permanently**.
-   The stanza said `weekly`, so on every host that installed this before today,
-   auditing stopped seven days later and nothing anywhere reported it. The host
-   keeps looking instrumented. This is the most serious defect found in this
-   project, and it survived every test that existed because no test rotated a log.
-
-   Measured, not inferred. Ubuntu 24.04 LTS: after rotation, `rsyslogd` held fd 9
-   pinned to `cmdscribe.log.1`, the post-rotation marker appeared in `.1`, and the
-   live log held zero records. Debian 13: identical. Adding a `postrotate` that
-   sends rsyslog `HUP` makes the marker land in the live log on both. Removing it
-   again — the negative control, run on both hosts — reproduces the dead log. So
-   the stanza is what fixes it and the test is what detects it.
-
-   **Debian's earlier green was luck.** An earlier version of this suite reported
-   "captured through rotation" on Debian while the same defect was present,
-   because it asserted on a file rsyslog was still writing to rather than on the
-   file that would exist next week. A test that passes on a broken system is worse
-   than no test, and this one was shipped.
-
-   Two things that looked like the bug and were not:
-
-   - `fileOwner`/`create` set to `root:root` on Ubuntu, where rsyslog runs as
-     `syslog`. Real, and separately fixed by deriving the owner — but rotation
-     still died with the owner fixed and no `postrotate`.
-   - logrotate's "parent directory has insecure permissions" refusal. On Ubuntu
-     `/var/log` is `0775 root:syslog` and logrotate refuses every snippet invoked
-     directly, **including the distro's own**, which is what a control in CI
-     observed. The reason it is not a problem in production is that Ubuntu's
-     `/etc/logrotate.conf` carries a global `su root adm` and the production
-     command is `logrotate /etc/logrotate.conf`, which includes the snippets and
-     applies it. Testing the snippet standalone tests the wrong command line; the
-     suite now reproduces the real one. That control was run as root and reported
-     accurately — the error was interpreting "the distro's own config fails too"
-     as exoneration instead of as a sign the harness was invoking something the
-     distro never invokes.
-
-   Because rotation is now opt-in, the residual risk is not our stanza but
-   something else starting to rotate the file without it — a distro baseline or a
-   config-management glob that catches `/var/log/cmdscribe.log` and reintroduces
-   the silent death. Measured on Debian 13 and Ubuntu 24.04, no shipped config
-   matches this log, so "never rotated" is currently a fact rather than a hope. It
-   has to stay a checked fact, so the suite asserts on every push that no logrotate
-   config on the host names or matches the command log unless `--rotate` was asked
-   for. A preference for never rotating is only true while it stays true.
+If you deploy on an unlisted distribution and it works — or doesn't — please open an issue either way. That is currently the only way this table improves.

@@ -162,7 +162,8 @@ if ! grep -q "$MARK" "$LOG"; then
         # has not fired since, and the first-command assertion is enforced again.
         # It stays because the underlying behaviour -- the first record written
         # into a freshly created log file can be dropped -- is documented and
-        # unfixed (SECURITY.md limitation 8); if it reappears this reports itself
+        # unfixed (SECURITY.md, Known limitations: "first record written into a
+        # newly created log file can be dropped"); if it reappears this reports itself
         # loudly instead of quietly reddening a suite that would then be telling
         # the truth about something else.
         #
@@ -175,7 +176,7 @@ if ! grep -q "$MARK" "$LOG"; then
         printf '   SKIP: first-command-of-session assertion NOT enforced.\n'
         printf '         Scope: CI runner, and only the first probe session.\n'
         printf '         Cause: first record into a newly created log file.\n'
-        printf '         SECURITY.md limitation 8. Unfixed.\n'
+        printf '         Documented under Known limitations in SECURITY.md. Unfixed.\n'
         printf '         Everything else in this job still runs and still fails\n'
         printf '         hard. This is the only assertion CI can skip.\n'
         printf '   ============================================================\n'
@@ -216,7 +217,7 @@ grep -q "IT_EARLY" "$LOG" \
 printf '   early command recorded\n'
 
 step "3c. a previous session's command must never be attributed to this one"
-# SECURITY.md limitation 7. bash loads HISTFILE before drawing the first prompt,
+# Fixed in 0.0.2 (see CHANGELOG). bash loads HISTFILE before drawing the first prompt,
 # so `history 1` can still be the last command of some EARLIER session. Emitting
 # it writes a record carrying this session's pid, tty and timestamp for a command
 # nobody in this session ran -- manufacturing a record, which is worse than
@@ -333,7 +334,8 @@ step "7b. the default install must NOT rotate the log"
 # rotation is only true while it stays true. A distro baseline or a config-
 # management glob that starts matching /var/log/cmdscribe.log would rotate it
 # without our mandatory postrotate, and the result is the silent death in
-# SECURITY.md limitation 9 -- a dead log on a host that still looks instrumented.
+# SECURITY.md, Known limitations: rotation's failure mode is silent -- a dead log
+# on a host that still looks instrumented.
 if command -v logrotate >/dev/null 2>&1; then
     matched=$(logrotate -d /etc/logrotate.conf 2>&1 | grep -c "cmdscribe" || true)
     if [ "$matched" != "0" ]; then
