@@ -60,24 +60,29 @@ Enforced in three places, all of which must stay:
 on an installed host. Verified on Debian 13: the log lands `0600
 root:root`, and `sudo -u nobody cat` gets `Permission denied`.
 
-### On Ubuntu it lands `0600 syslog:syslog` instead
+### The log's owner is derived, not fixed
 
-Found by CI on a third distro; Debian had been hiding it. rsyslog's
-`fileOwner="root"` is a request, not a guarantee — it can only chown if rsyslog
-itself runs as root, and Ubuntu ships rsyslog running as the unprivileged
-`syslog` user. So the file is created `syslog:syslog` and rsyslog has no power
-to make it anything else.
+install.sh works out the account rsyslog actually runs as — the running process,
+else the unit's `User=`, else `$PrivDropToUser` in `/etc/rsyslog.conf`, else
+root — and the group that owns `/var/log`, then renders both the rsyslog rule and
+the logrotate `create` line from them.
 
-The confidentiality claim survives: `0600` leaves only that account and root
-able to read it. What does not survive is the identity of the reader. **On
-Ubuntu the rsyslog service account can read your command log**, and on Debian it
-cannot. If that account is shared, compromised, or runs anything else you did
-not choose, treat the log as readable by it. Set the group to a dedicated group
-you control, or ship off-box, if that matters in your environment.
+Hardcoding `root:root` was wrong on any distro where rsyslog drops privileges,
+which includes Ubuntu. logrotate runs as root and would create the rotated file
+`root:root 0600`; rsyslog, running as `syslog`, cannot reopen a file it does not
+own, so **logging would stop at the first rotation** and nothing would report it.
 
-`ci/install-smoke.sh` asserts the mode unconditionally and accepts either
-owner, failing on anything else — because asserting `root:root` here would have
-made the test wrong rather than the host.
+On Ubuntu the log is therefore `syslog`-owned, and the consequence for you is
+narrow but real: **the rsyslog service account can read your command log**, and on
+Debian it cannot. Mode stays 0600 in every case, so the group carries no access at
+all — the readers are the owner and root, and no confidentiality was traded to fix
+the rotation bug. If the service account reading your log matters in your
+environment, put the log on a group you control or ship it off-box; the collector
+stanza is in `platform/linux/10-cmdscribe.conf`.
+
+`ci/install-smoke.sh` asserts the mode unconditionally and asserts owner and group
+against values it derives from the host itself, independently of install.sh, so the
+test cannot simply agree with the installer's mistakes.
 
 ### macOS has none of this protection
 
@@ -206,11 +211,28 @@ person. If you need a support commitment, this is not that.
    out of a mutable list and can lose a session's first command without the log
    saying so. The kernel layer sees the `execve` either way.
 
-9. **On Ubuntu, rotation may silently kill logging — inferred, not yet
-   verified.** The logrotate config says `create 0600 root root`, but Ubuntu runs
-   rsyslog as the unprivileged `syslog` user, which cannot open a `root:root
-   0600` file that logrotate just created. If that holds, cmdscribe stops
-   logging completely after the first rotation on Ubuntu and nothing reports it.
-   Verify with `logrotate -f` on a real Ubuntu host before trusting rotation
-   there; the fix is a group both can use. Recorded here as an inference with its
-   verification method attached, not as a finding.
+9. **Rotation is tested now, and verified on Debian only.** It was the
+   highest-consequence untested path in the product: the logrotate config had no
+   postrotate and no copytruncate, and the owner it created was hardcoded.
+
+   Fixed — owner and group are derived per the section above. Verified on Debian
+   13 by forcing a real rotation and capturing afterwards: logrotate renames the
+   file, creates a fresh 0600 one, rsyslog notices the inode change on its own, and
+   the next command is recorded.
+
+   **Not verified end to end on a real Ubuntu host**, where rsyslog runs
+   unprivileged. The old config's failure mode follows mechanically from the
+   ownership — logrotate creates a `root:root 0600` file an unprivileged rsyslog
+   cannot reopen, so logging stops at the first rotation — but nobody has watched
+   it happen. `logrotate -f /etc/logrotate.d/cmdscribe` followed by one command, on
+   an Ubuntu VM, closes it.
+
+   GitHub's runner cannot answer this. Logrotate there refuses to rotate anything
+   under `/var/log`, **including the distribution's own rsyslog config**, because
+   that image's `/var/log` is `0775 root:syslog` and logrotate objects to
+   group-writable directories whose group is not root. The test establishes this
+   with a dry-run control against the distro config, then skips loudly rather than
+   failing cmdscribe for the state of the rig. That control is the reason the claim
+   above is phrased as mechanics-plus-gap rather than as a confirmed Ubuntu
+   failure: an earlier version of this file asserted the failure as fact on evidence
+   that turned out to describe a test machine.
