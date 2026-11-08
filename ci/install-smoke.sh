@@ -301,6 +301,72 @@ step "7. re-install over an existing install (idempotence)"
 [ -f /etc/profile.d/zz-cmdscribe.sh ] || die "re-install removed the bash hook"
 printf '   still installed, hooks intact\n'
 
+step "7b. rotation must not silently kill logging"
+# This is the highest-consequence untested path in the product. The logrotate
+# config has no postrotate block and no copytruncate, and on Ubuntu the new file
+# is created root:root while rsyslog runs as the unprivileged `syslog` user. Two
+# independent ways for logging to die quietly after the first rotation:
+#
+#   1. rsyslog keeps writing to the rotated inode and the new file stays empty
+#      forever (rsyslog usually detects the inode change and reopens, but that is
+#      an rsyslog behaviour cmdscribe is relying on, not something it arranges).
+#   2. rsyslog reopens, cannot open a root:root 0600 file, and discards records.
+#
+# Either one means a host that looks instrumented and records nothing, from
+# week two onward. Force a real rotation and then prove a command still lands.
+if ! command -v logrotate >/dev/null 2>&1; then
+    printf '   logrotate not installed here; nothing to test\n'
+else
+    MARK2="IT_ROTATED_$$"
+    n_before=$(wc -l < "$LOG")
+    # `-s` needs a state-file argument; `logrotate -fs <cfg>` printed usage and
+    # rotated nothing, and this step reported a pass anyway. Fourth time this
+    # project has produced a check that silently never ran, so the rule now
+    # enforced here is: assert the setup happened before trusting the assertion.
+    # Not -v: it emits dozens of "Creating new state" lines that bury the point.
+    # Whether the rotation happened is proven below by $LOG.1 existing, which is
+    # evidence rather than narration.
+    logrotate -f /etc/logrotate.d/cmdscribe >/tmp/rot.out 2>&1 \
+        || { sed 's/^/     /' /tmp/rot.out; die "logrotate exited non-zero"; }
+
+    # Prove the rotation really happened. With `create` and `delaycompress` the
+    # previous file must now exist as $LOG.1. If it does not, nothing rotated and
+    # a green result below would mean nothing at all.
+    if [ ! -e "${LOG}.1" ]; then
+        ls -l "$LOG"* 2>/dev/null | sed 's/^/     /'
+        die "rotation did not actually occur -- refusing to report a pass on a test that did not run"
+    fi
+    printf '   rotated to %s.1\n' "$LOG"
+
+    # rsyslog polls for the inode change rather than being signalled; give it
+    # longer than the usual settle time or this fails for timing, not for cause.
+    sleep 6
+
+    printf '   after rotation: %s\n' "$(ls -l "$LOG"* 2>/dev/null | awk '{print $1, $3":"$4, $9}' | tr '\n' ' ')"
+
+    CS_EXTRA="echo $MARK2" \
+        python3 tests/drive-pty.py bash system 30 /tmp/smoke-rot.log >/dev/null 2>&1 \
+        || die "drive-pty.py failed for the post-rotation probe"
+    sleep 2
+
+    if [ ! -e "$LOG" ]; then
+        die "log file vanished after rotation"
+    fi
+    if ! grep -q "$MARK2" "$LOG"; then
+        printf '\n   ---- post-rotation failure ----\n'
+        ls -l "$LOG"* 2>/dev/null | sed 's/^/     /'
+        printf '   log now holds %s record(s) (was %s before rotation)\n' \
+            "$(wc -l < "$LOG")" "$n_before"
+        printf '   rotated-away content:\n'
+        head -3 "${LOG}.1" 2>/dev/null | sed 's/^/     /'
+        printf '   rsyslog last words:\n'
+        journalctl -u rsyslog --no-pager -n 15 2>/dev/null | sed 's/^/     /'
+        grep -i "cmdscribe\|omfile" /var/log/syslog 2>/dev/null | tail -8 | sed 's/^/     /'
+        die "logging STOPPED at rotation: a command typed after rotation was not recorded"
+    fi
+    printf '   captured through rotation: %s\n' "$MARK2"
+fi
+
 step "8. uninstall must remove the tool and KEEP the evidence"
 before=$(wc -l < "$LOG")
 ./uninstall.sh >/dev/null || die "uninstall.sh exited non-zero"
