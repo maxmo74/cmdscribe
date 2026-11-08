@@ -321,21 +321,44 @@ step "7. re-install over an existing install (idempotence)"
 [ -f /etc/profile.d/zz-cmdscribe.sh ] || die "re-install removed the bash hook"
 printf '   still installed, hooks intact\n'
 
-step "7b. rotation must not silently kill logging"
-# This is the highest-consequence untested path in the product. The logrotate
-# config has no postrotate block and no copytruncate, and on Ubuntu the new file
-# is created root:root while rsyslog runs as the unprivileged `syslog` user. Two
-# independent ways for logging to die quietly after the first rotation:
-#
-#   1. rsyslog keeps writing to the rotated inode and the new file stays empty
-#      forever (rsyslog usually detects the inode change and reopens, but that is
-#      an rsyslog behaviour cmdscribe is relying on, not something it arranges).
-#   2. rsyslog reopens, cannot open a root:root 0600 file, and discards records.
-#
-# Either one means a host that looks instrumented and records nothing, from
-# week two onward. Force a real rotation and then prove a command still lands.
+step "7b. the default install must NOT rotate the log"
+# The default is never rotated, so the thing worth asserting is the negative:
+# nothing rotates it, and nothing DELETES it. `rotate 12` with `weekly` used to
+# discard the audit trail after three months, which is the property this tool
+# exists to protect.
+[ ! -e /etc/logrotate.d/cmdscribe ] \
+    || die "default install created a logrotate stanza; the log would be rotated and eventually deleted"
+
+# And nothing ELSE rotates it either. This is not paranoia: the preference for no
+# rotation is only true while it stays true. A distro baseline or a config-
+# management glob that starts matching /var/log/cmdscribe.log would rotate it
+# without our mandatory postrotate, and the result is the silent death in
+# SECURITY.md limitation 9 -- a dead log on a host that still looks instrumented.
+if command -v logrotate >/dev/null 2>&1; then
+    matched=$(logrotate -d /etc/logrotate.conf 2>&1 | grep -c "cmdscribe" || true)
+    if [ "$matched" != "0" ]; then
+        logrotate -d /etc/logrotate.conf 2>&1 | grep -i cmdscribe | head -5 | sed 's/^/     /'
+        die "some logrotate config matches the command log even though rotation was not requested"
+    fi
+    printf '   no logrotate config on this host names or matches the command log\n'
+else
+    printf '   logrotate not installed here; nothing can rotate it behind our back\n'
+fi
+
+step "7c. rotation, when explicitly asked for, must not kill logging"
+# The opt-in path has to be tested too, or the flag is a claim rather than a
+# feature. This is the path that killed logging on every host for the whole life
+# of the project: rsyslog keeps writing to the rotated inode unless something
+# reopens it, so the live file stays empty forever and nothing reports it.
+./install.sh --rotate >/dev/null || die "install --rotate failed"
+[ -e /etc/logrotate.d/cmdscribe ] || die "--rotate did not install the stanza"
+grep -q "postrotate" /etc/logrotate.d/cmdscribe \
+    || die "the rotation stanza has no postrotate; rsyslog would keep writing to the old inode"
+grep -qE "^\s*rotate [0-9]{5,}" /etc/logrotate.d/cmdscribe \
+    || die "the rotation stanza can expire old segments; an audit trail must not delete itself"
+
 if ! command -v logrotate >/dev/null 2>&1; then
-    printf '   logrotate not installed here; nothing to test\n'
+    printf '   logrotate not installed here; cannot exercise rotation\n'
 else
     MARK2="IT_ROTATED_$$"
     n_before=$(wc -l < "$LOG")
@@ -438,6 +461,14 @@ else
     printf '   captured through rotation: %s\n' "$MARK2"
     fi
 fi
+
+# Back to the default, and prove the flag is a desired-state switch rather than a
+# one-time setup: installing without --rotate must take rotation back off, or an
+# upgrading host keeps a rotation it never asked for.
+./install.sh >/dev/null || die "re-install without --rotate failed"
+[ ! -e /etc/logrotate.d/cmdscribe ] \
+    || die "installing without --rotate left the rotation stanza in place"
+printf '   re-install without --rotate removed it; back to never rotated\n'
 
 step "8. uninstall must remove the tool and KEEP the evidence"
 before=$(wc -l < "$LOG")

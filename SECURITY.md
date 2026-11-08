@@ -50,11 +50,16 @@ is worth stating bluntly:
 > `mysql -pSecret` inside an interactive shell. A world-readable command
 > log is a credential disclosure on every host you run it on.
 
-Enforced in three places, all of which must stay:
+Enforced everywhere the log can be created:
 
 - rsyslog: `fileCreateMode="0600"`, `dirCreateMode="0700"`
-- logrotate: `create 0600 root root`
+- logrotate, **if you opt into rotation with `--rotate`**: `create 0600`, with the
+  owner derived from the host rather than hardcoded to `root root` — see the next
+  section. The default install writes no logrotate config at all, so there is no
+  second creation path to get wrong.
 - newsyslog (BSD): mode field `0600`
+
+The mode is asserted unconditionally in CI on every push, on both Linux and macOS.
 
 `make check` does not cover this; `tests/integration.sh` asserts the mode
 on an installed host. Verified on Debian 13: the log lands `0600
@@ -212,7 +217,9 @@ person. If you need a support commitment, this is not that.
    saying so. The kernel layer sees the `execve` either way.
 
 9. **Rotation silently killed logging on every distro, one week after install.
-   Fixed, and verified with a negative control on two hosts.**
+   Fixed, and verified with a negative control on two hosts. The default is now
+   that nothing rotates the log at all, which removes the failure class rather
+   than fixing one instance of it.**
 
    The logrotate stanza had no `postrotate` and no `copytruncate`. Nothing ever
    told rsyslog to reopen the log, so after the first rotation rsyslog kept
@@ -251,3 +258,12 @@ person. If you need a support commitment, this is not that.
      accurately — the error was interpreting "the distro's own config fails too"
      as exoneration instead of as a sign the harness was invoking something the
      distro never invokes.
+
+   Because rotation is now opt-in, the residual risk is not our stanza but
+   something else starting to rotate the file without it — a distro baseline or a
+   config-management glob that catches `/var/log/cmdscribe.log` and reintroduces
+   the silent death. Measured on Debian 13 and Ubuntu 24.04, no shipped config
+   matches this log, so "never rotated" is currently a fact rather than a hope. It
+   has to stay a checked fact, so the suite asserts on every push that no logrotate
+   config on the host names or matches the command log unless `--rotate` was asked
+   for. A preference for never rotating is only true while it stays true.

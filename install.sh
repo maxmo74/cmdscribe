@@ -10,6 +10,11 @@
 #   ./install.sh              shell layer + system log sink
 #   ./install.sh --auditd     also the auditd rules (Linux)
 #   ./install.sh --logfile    also a plain text file to tail (macOS)
+#   ./install.sh --rotate     rotate the log weekly (default: never rotated)
+#
+# The flags are the desired state, not a one-time setup. Installing without
+# --rotate removes a rotation stanza a previous install put there, and installing
+# without --auditd leaves the auditd rules alone but says so.
 #
 # Uninstall with ./uninstall.sh, which replays the manifest written here.
 #
@@ -32,11 +37,13 @@ VERSION=$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo unknown)
 MARK='# cmdscribe'
 WITH_AUDITD=0
 WITH_LOGFILE=0
+WITH_ROTATE=0
 LOGFILE_PATH=/var/log/cmdscribe.log
 for _arg in "$@"; do
     case "$_arg" in
         --auditd)  WITH_AUDITD=1 ;;
         --logfile) WITH_LOGFILE=1 ;;
+        --rotate)  WITH_ROTATE=1 ;;
         *) echo "unknown option: $_arg" >&2; exit 2 ;;
     esac
 done
@@ -287,15 +294,51 @@ case "$OS" in
                 note "rsyslog not present; records will go wherever logger sends them"
             fi
         fi
+        # ---- rotation ------------------------------------------------ #
+        # Default is never rotated, and that is a decision rather than an
+        # omission. An interactive command log measured ~200 bytes a record, and
+        # non-interactive shells are not captured at all, so cron, scripts, CI
+        # runners and daemons add nothing. A very busy multi-user host lands under
+        # a gigabyte a year. Rotation buys nothing that capacity would not, and it
+        # costs three things:
+        #
+        #   - `rotate 12` with `weekly` deletes the audit trail after ~3 months,
+        #     against the rule this tool otherwise keeps without exception:
+        #     uninstall removes the tool and keeps the log.
+        #   - its failure mode is silent. It did exactly that, on every host,
+        #     for the whole life of this project. SECURITY.md limitation 9.
+        #   - it fragments evidence across a compressed chain, which is worse for
+        #     reconstruction rather than better.
+        #
+        # Measured on Debian 13 and Ubuntu 24.04: no baseline logrotate config
+        # globs /var/log/*, so this log is rotated only if we ask for it. Declining
+        # to ask is therefore a real guarantee and not a hope -- and --check must
+        # keep asserting it, because a future distro baseline or a config-
+        # management glob could take rotation back silently and reintroduce the
+        # quiet death.
         if [ -d /etc/logrotate.d ]; then
-            sed -e "s/@CS_LOG_USER@/$CS_LOG_USER/g" \
-                -e "s/@CS_LOG_GROUP@/$CS_LOG_GROUP/g" \
-                "$SRC/platform/linux/cmdscribe.logrotate" \
-                > /etc/logrotate.d/cmdscribe || {
-                    note "ERROR: could not write the logrotate config"; exit 1; }
-            chmod 0644 /etc/logrotate.d/cmdscribe
-            chown root:root /etc/logrotate.d/cmdscribe
-            rec R /etc/logrotate.d/cmdscribe
+            if [ "$WITH_ROTATE" = 1 ]; then
+                sed -e "s/@CS_LOG_USER@/$CS_LOG_USER/g" \
+                    -e "s/@CS_LOG_GROUP@/$CS_LOG_GROUP/g" \
+                    "$SRC/platform/linux/cmdscribe.logrotate" \
+                    > /etc/logrotate.d/cmdscribe || {
+                        note "ERROR: could not write the logrotate config"; exit 1; }
+                chmod 0644 /etc/logrotate.d/cmdscribe
+                chown root:root /etc/logrotate.d/cmdscribe
+                rec R /etc/logrotate.d/cmdscribe
+                note "rotation enabled; segments are kept, never deleted"
+            elif [ -e /etc/logrotate.d/cmdscribe ]; then
+                # Removing this is the difference between "no rotation" and
+                # "rotation you did not ask for", and on a host upgrading from an
+                # earlier version that difference is the entire point.
+                if grep -q "/var/log/cmdscribe.log" /etc/logrotate.d/cmdscribe; then
+                    rm -f /etc/logrotate.d/cmdscribe
+                    note "removed a rotation stanza left by an earlier version;"
+                    note "the log is no longer rotated or deleted. Re-add with --rotate"
+                else
+                    note "WARNING: /etc/logrotate.d/cmdscribe is not ours; left in place"
+                fi
+            fi
         fi
         ;;
     Darwin)

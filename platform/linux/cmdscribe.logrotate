@@ -1,12 +1,23 @@
+# Opt-in. install.sh does NOT install this unless run with --rotate; the default
+# is that the command log is never rotated. See "rotation" in install.sh and
+# limitation 9 in SECURITY.md for why.
+#
 # Rendered by install.sh; @CS_LOG_USER@ and @CS_LOG_GROUP@ are substituted.
 #
-# Neither value can be hardcoded, and getting them wrong fails quietly:
+# The log is never rotated by default because rotation on an audit trail costs
+# more than it saves: an interactive command log is ~200 bytes a record, so the
+# disk argument does not apply, and `rotate 12 weekly` deletes the trail after
+# three months. When rotation IS asked for, this file keeps every segment.
 #
-#   - logrotate refuses to rotate a file in a directory that is writable by a
-#     group other than the one it is creating the file for. Ubuntu's /var/log is
-#     0775 root:adm, so `create 0600 root root` is rejected outright -- logrotate
-#     errors every week and the log NEVER rotates, growing without bound while
-#     holding typed passwords. Debian's /var/log is 0755 and hides this.
+# Owner and group are derived, not fixed, and getting them wrong fails quietly:
+#
+#   - logrotate refuses to rotate a file in a directory writable by a group other
+#     than the one it creates the file for. Ubuntu's /var/log is 0775 root:syslog,
+#     so `create 0600 root root` is rejected outright. Debian's /var/log is 0755
+#     and hides this. Note that production runs `logrotate /etc/logrotate.conf`,
+#     which includes this snippet and applies Ubuntu's global `su root adm`; that
+#     is what makes rotation in that directory possible at all, and it is why
+#     invoking this snippet standalone fails even for the distro's own logs.
 #   - the created file must be writable by the account rsyslog runs as, which is
 #     root on Debian and syslog on Ubuntu. A root:root 0600 file is unwritable by
 #     an unprivileged rsyslog, so logging stops at the first rotation.
@@ -15,7 +26,12 @@
 # world-readable and hands every command typed on the box to any local user.
 /var/log/cmdscribe.log {
     weekly
-    rotate 12
+
+    # Effectively never expires: 100000 weekly rotations is about 1900 years.
+    # Deliberately not a number anyone will reach. An audit trail must not go
+    # away on a schedule -- that is the property this whole file exists to keep.
+    rotate 100000
+
     create 0600 @CS_LOG_USER@ @CS_LOG_GROUP@
     missingok
     notifempty
@@ -23,13 +39,13 @@
     delaycompress
 
     postrotate
-        # rsyslog keeps writing to the rotated inode until something tells it to
-        # reopen. Nothing else fixes it. Measured on Ubuntu 24.04: without this
-        # stanza the post-rotation record landed in cmdscribe.log.1, rsyslog's fd
-        # stayed pinned to that inode, and the live log held zero records forever
-        # -- the host looks instrumented and records nothing. rsyslog does poll
-        # for rotation, but relying on a poll interval to notice that an auditing
-        # tool has stopped auditing is not a design, it is a coincidence.
+        # Mandatory, not an optimisation. Without this rsyslog keeps writing to
+        # the rotated inode and the live file stays empty forever: measured on
+        # Ubuntu 24.04 and Debian 13, the post-rotation marker landed in
+        # cmdscribe.log.1 and the live log held zero records, permanently, with
+        # nothing reported anywhere. rsyslog does poll for rotation, but relying
+        # on a poll interval to notice that an auditing tool has stopped auditing
+        # is a coincidence, not a design.
         if [ -x /usr/lib/rsyslog/rsyslog-rotate ]; then
             /usr/lib/rsyslog/rsyslog-rotate
         elif command -v systemctl >/dev/null 2>&1; then

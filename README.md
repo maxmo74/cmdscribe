@@ -129,7 +129,11 @@ not a reasonable thing to assume about someone else's host. It reports
 ./install.sh              # shell layer + system log sink
 ./install.sh --auditd     # also the auditd rules (Linux)
 ./install.sh --logfile    # also a plain file to tail (macOS)
+./install.sh --rotate     # rotate the log weekly (default: never rotated)
 ```
+
+The flags are the desired state, not one-time setup: installing without `--rotate`
+removes a rotation stanza a previous version put there.
 
 Then open a **new** shell and:
 
@@ -221,6 +225,46 @@ defensible.
    the log world-readable and hands every command typed on the box to
    every local user. Same trap for logrotate, which needs
    `create 0600 root root`.
+
+## How long the log lives
+
+**Forever, by default.** No rotation, no expiry, no deletion.
+
+That is a decision, not an oversight. An interactive command log measured about
+200 bytes a record, and non-interactive shells are never captured — so cron jobs,
+scripts, CI runners and daemons add nothing. A very busy multi-user host comes to
+well under a gigabyte a year:
+
+| interactive commands/day | per year |
+|---|---|
+| 20 — one admin, light | ~1.5 MB |
+| 100 — normal server | ~7 MB |
+| 1,000 — busy multi-user | ~73 MB |
+| 10,000 — heavy jump box | ~730 MB |
+
+What rotation used to cost was worse than what it bought. The shipped stanza said
+`weekly` and `rotate 12`, which **deleted the audit trail after about three
+months** — against the rule this tool otherwise keeps without exception, that
+uninstall removes the software and keeps the log. And rotation's failure mode is
+silent: for the whole life of this project, logging stopped on every host at the
+first rotation with nothing reported anywhere. See `SECURITY.md` limitation 9.
+
+Disk pressure is the wrong problem to solve by destroying an audit trail. If
+volume ever becomes real, the answer is the off-box collector stanza sitting
+commented in `platform/linux/10-cmdscribe.conf`, or a bigger disk.
+
+### If you want rotation anyway
+
+```sh
+sudo ./install.sh --rotate
+```
+
+Segments are then kept permanently rather than expiring — the `rotate` count is
+100000 weekly rotations, about nineteen centuries — and the stanza carries the
+`postrotate` that sends rsyslog `HUP`, which is mandatory rather than optional.
+Without it rsyslog keeps writing to the rotated inode and the live file stays
+empty forever. That is measured, on two distros, and the test suite asserts it on
+every push.
 
 ## Uninstall
 
