@@ -91,8 +91,9 @@ A local-only log is the first thing anyone with a shell deletes. The rsyslog con
 |---|---|---|
 | Debian 13 | tested | tested |
 | Ubuntu 24.04 | tested | tested |
+| Rocky Linux 9 (RHEL family) | tested | tested |
 | macOS | tested (bash 3.2) | tested |
-| other Linux | should work, untested | should work, untested |
+| other Linux (Fedora, openSUSE) | should work, untested | should work, untested |
 | BSD | should work, untested | should work, untested |
 
 macOS install paths are covered by their own CI job, which runs the installer as root, checks the runtime lands in `/usr/local/share` rather than the SIP-sealed `/usr/share`, asserts records reach the unified log via the query this project documents, and verifies uninstall restores the rc files byte-identically while keeping the log.

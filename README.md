@@ -13,9 +13,9 @@ login=massimo actas=root pid=4127 ppid=4125 tty=pts/0 rc=1 :: ansible-vault view
 
 **Pre-1.0.** The shell layer is solid and does one job well.
 
-**Tested:** Debian 13 and Ubuntu 24.04 (real hosts and CI, bash + zsh, install through uninstall), and macOS (bash 3.2 and zsh 5.9).
+**Tested:** Debian 13, Ubuntu 24.04 and Rocky Linux 9 (real hosts and CI, bash + zsh, install through uninstall), and macOS (bash 3.2 and zsh 5.9).
 
-**Should work, not tested:** other Linux distributions, BSDs. cmdscribe uses `PROMPT_COMMAND`/`preexec`, `/etc/profile.d`, rsyslog and `/proc` — nothing distribution-specific — but if you are on RHEL, Fedora or openSUSE and hit a problem, please open an issue.
+**Should work, not tested:** other Linux distributions, BSDs. cmdscribe uses `PROMPT_COMMAND`/`preexec`, `/etc/profile.d`, rsyslog and `/proc` — nothing distribution-specific — but if you are on Fedora or openSUSE and hit a problem, please open an issue.
 
 **Not built yet:** DEB/RPM packages, Ansible roles, and the cross-checking tool (see [Roadmap](#roadmap)).
 

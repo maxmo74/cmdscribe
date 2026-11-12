@@ -11,6 +11,14 @@ This project is pre-1.0. The log format may change before 1.0; anything that cha
 - Ansible roles.
 - `cmdscribe-reconcile`: shell ↔ auditd cross-check.
 
+## [0.0.8] - 2026-11-12
+
+### Fixed
+- **On RHEL-family systems the command log was never created, and records landed in `/var/log/messages` instead.** The rsyslog rule matched `$syslogtag == 'cmdscribe:'`, but RHEL 9 feeds rsyslog through journald, which annotates the tag with the sending pid: `cmdscribe[16357]:`. The condition matched nothing, so records fell through to the distribution's default rule. `/var/log/messages` is rotated by `/etc/logrotate.d/rsyslog` under the global `weekly`/`rotate 4`, so the command history would have been deleted after about a month — and `install.sh` reported success throughout. The rule now matches on containment, which is correct on both tag forms. Verified on Rocky 9 with SELinux enforcing; Debian 13 and Ubuntu 24.04 re-verified with no change in behaviour.
+
+### Added
+- **Rocky Linux 9 is now a tested platform**, bash and zsh, install through capture. No code change was needed beyond the rsyslog match: `/etc/profile.d`, the rsyslog service account (`root`), `/var/log` permissions (`0755 root:root`), the `audit` package, `augenrules` and the shipped audit rules all behaved as on Debian/Ubuntu, and no SELinux denials were raised.
+
 ## [0.0.7] - 2026-11-12
 
 ### Added
