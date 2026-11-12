@@ -11,6 +11,14 @@ This project is pre-1.0. The log format may change before 1.0; anything that cha
 - Ansible roles.
 - `cmdscribe-reconcile`: shell ↔ auditd cross-check.
 
+## [0.0.7] - 2026-11-12
+
+### Added
+- CI runs the installer end-to-end on macOS. The acceptance matrix sources the entry files directly and never executed `install.sh`; this job installs as root, checks the runtime lands in `/usr/local/share` rather than the SIP-sealed `/usr/share`, asserts records reach the unified log using the query the README documents, and verifies uninstall restores `/etc/zshrc`, `/etc/bashrc` and `/etc/profile` byte-identically against backups the test took itself.
+
+### Fixed
+- **`install.sh --logfile` after a plain install created the log and never wrote to it.** The hook line carries `CMDSCRIBE_LOGFILE`, and once a hook existed the installer never revisited its contents. The file was created, the installer reported `also writing /var/log/cmdscribe.log`, and the file stayed empty permanently. Hook lines are now treated as desired state and updated in place when they differ; the reverse also works, so installing without `--logfile` stops writing the file instead of leaving an admin-readable copy behind forever. This is the hook-line half of the v0.0.5 `--rotate` change, which it missed.
+
 ## [0.0.6] - 2026-11-08
 
 ### Fixed

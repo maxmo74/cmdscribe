@@ -107,6 +107,41 @@ hook_into() {
     fi
 
     if grep -qF "$MARK" "$_hi_f" 2>/dev/null; then
+        # Desired state, not first-write-wins. The flag set can change between
+        # runs, and the hook line itself carries state: CMDSCRIBE_LOGFILE tells
+        # the shell where the convenience log is. Measured on macOS -- found by
+        # ci/install-smoke-macos.sh on its first run -- `install.sh` followed by
+        # `install.sh --logfile` created /var/log/cmdscribe.log, printed "also
+        # writing /var/log/cmdscribe.log", and then never wrote a single record
+        # to it, because the line already in /etc/zshrc predated the flag and was
+        # never revisited. Reported success, thing is off: the same shape as
+        # every other serious defect in this project, and the reason v0.0.5 made
+        # --rotate desired state rather than one-time setup. This is the hook-line
+        # half of that, which v0.0.5 missed.
+        if ! grep -qxF "$_hi_line" "$_hi_f" 2>/dev/null; then
+            _hi_tmp="$_hi_f.cmdscribe.new"
+            # Replace the line following our marker, and drop the stale one it
+            # replaces. Written through, not moved into place, so ownership and
+            # mode survive on an /etc file.
+            if awk -v mark="$MARK" -v line="$_hi_line" '
+                $0 == mark {
+                    print
+                    if (!printed) { print line; printed = 1 }
+                    skip = 1
+                    next
+                }
+                skip && (/cmdscribe\/entry\./ || /CMDSCRIBE_LOGFILE/) { skip = 0; next }
+                { skip = 0; print }
+            ' "$_hi_f" > "$_hi_tmp"; then
+                cat "$_hi_tmp" > "$_hi_f"
+                rm -f "$_hi_tmp"
+                note "updated hook line in $_hi_f"
+            else
+                rm -f "$_hi_tmp"
+                note "WARNING: could not update the hook line in $_hi_f; the"
+                note "  settings you asked for are NOT in effect for this file"
+            fi
+        fi
         # Already hooked. It MUST still be recorded, or a re-install wipes
         # the manifest entry and a later uninstall leaves the hook live --
         # which for an auditing tool means logging quietly continues after

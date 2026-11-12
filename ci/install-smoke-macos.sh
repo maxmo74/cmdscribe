@@ -136,6 +136,24 @@ sleep 2
 grep -q "$MARK" "$LOG" || die "$MARK absent from $LOG; the shell is not appending to it"
 printf '   %s has the marker at %s\n' "$LOG" "$perms"
 
+step "5b. installing WITHOUT --logfile stops writing it"
+# The other direction of the same rule. A flag is desired state, so dropping it
+# has to take effect on the next install -- otherwise a host that once asked for
+# --logfile keeps a world-writable-by-admins convenience log forever, which is
+# exactly what the v0.0.5 change to --rotate was about.
+./install.sh >/dev/null || die "install.sh (no flags) exited non-zero"
+if grep -q CMDSCRIBE_LOGFILE /etc/zshrc; then
+    die "/etc/zshrc still carries CMDSCRIBE_LOGFILE after installing without --logfile"
+fi
+before=$(wc -l < "$LOG")
+env -i PATH="$PATH" HOME="$HOME" TERM=xterm \
+    python3 tests/drive-pty.py bash system 30 /tmp/smoke-mac-nofile.log >/dev/null 2>&1 || true
+sleep 2
+after=$(wc -l < "$LOG")
+[ "$before" = "$after" ] || die "$LOG grew by $((after - before)) line(s) after --logfile was \
+dropped; the hook line still points at it"
+printf '   hook line updated; %s stayed at %s line(s)\n' "$LOG" "$after"
+
 step "6. re-install is idempotent"
 ./install.sh >/dev/null || die "second install exited non-zero"
 for f in $RCS; do
