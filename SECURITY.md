@@ -95,6 +95,6 @@ A local-only log is the first thing anyone with a shell deletes. The rsyslog con
 | other Linux | should work, untested | should work, untested |
 | BSD | should work, untested | should work, untested |
 
-macOS install paths are verified manually rather than in CI; the CI matrix on `macos-latest` exercises capture, not the installer.
+macOS install paths are covered by their own CI job, which runs the installer as root, checks the runtime lands in `/usr/local/share` rather than the SIP-sealed `/usr/share`, asserts records reach the unified log via the query this project documents, and verifies uninstall restores the rc files byte-identically while keeping the log.
 
 If you deploy on an unlisted distribution and it works — or doesn't — please open an issue either way. That is currently the only way this table improves.

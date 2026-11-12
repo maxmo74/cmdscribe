@@ -149,3 +149,32 @@ jobs:
           path: /tmp/smoke-*.log
           if-no-files-found: ignore
           retention-days: 7
+
+  # The same class of coverage on macOS. The acceptance matrix on macos-latest
+  # sources entry.bash/entry.zsh directly and never runs install.sh, which is how
+  # a macOS-only installer bug reached a release: a helper named say() resolved to
+  # /usr/bin/say, and macOS is the one platform that has /usr/bin/say. Every other
+  # platform aborted; macOS read its version string out loud and carried on.
+  install-smoke-macos:
+    name: install / capture / uninstall on macOS
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm a clean starting state
+        run: |
+          test ! -d /usr/local/share/cmdscribe || { echo "runtime already present"; exit 1; }
+          test ! -e /var/log/cmdscribe.log || { echo "log already present"; exit 1; }
+          echo "clean"
+      - name: sudo ci/install-smoke-macos.sh
+        # CMDSCRIBE_CI is explicit for the same reason as the Linux job: a skip
+        # that silently never fires looks identical to a test that passed.
+        run: sudo -E env "PATH=$PATH" CMDSCRIBE_CI=1 ./ci/install-smoke-macos.sh
+      - name: Upload transcripts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-smoke-macos-transcripts
+          path: /tmp/smoke-mac-*.log
+          if-no-files-found: ignore
+          retention-days: 7

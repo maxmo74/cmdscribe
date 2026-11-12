@@ -176,7 +176,7 @@ make syntax    # every file parses; shebangs, mode bits, licence headers
 make lint      # shellcheck --severity=warning
 ```
 
-CI runs those on `ubuntu-latest` and `macos-latest`, plus an installer smoke test that runs `install.sh` as root on a real distro, captures through a real login shell, uninstalls, and asserts the log survived. Set `REQUIRE_SHELLS="bash zsh"` to make a missing shell fail the run instead of silently shrinking it.
+CI runs those on `ubuntu-latest` and `macos-latest`, plus **two installer smoke tests** — one per platform — that run `install.sh` as root, capture through a real login shell, uninstall, and assert the log survived. Set `REQUIRE_SHELLS="bash zsh"` to make a missing shell fail the run instead of silently shrinking it.
 
 `tests/integration.sh` runs the same checks against a real host over SSH:
 

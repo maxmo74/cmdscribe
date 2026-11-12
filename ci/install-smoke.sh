@@ -38,7 +38,7 @@ die()  { printf '\nFAIL: %s\n' "$1" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "must run as root (it installs into /etc)"
 case $(uname -s) in
     Linux) PREFIX=/usr/share/cmdscribe ;;
-    *)     die "Linux only; macOS install is covered by tests/integration.sh" ;;
+    *)     die "Linux only; macOS install is covered by ci/install-smoke-macos.sh" ;;
 esac
 
 # rsyslog is the sink on Linux. If it is absent the log assertions below would
