@@ -139,7 +139,7 @@ Two independent capture layers, so that one can vouch for the other.
 | Who it really was after `sudo su -` | heuristic (process-tree walk) | **yes** — `auid` is stamped at login and immutable |
 | Survives someone unsetting `PROMPT_COMMAND` | no | **yes** |
 
-The shell layer is what you use day to day. The auditd layer is the independent record that survives someone disabling the shell layer. Comparing them per session is what `cmdscribe-reconcile` will do; **it is not implemented yet**, so today the two layers run side by side without cross-checking.
+The shell layer is what you use day to day. The auditd layer is the independent record that survives someone disabling the shell layer. Comparing them per session is what `cmdscribe-reconcile` will do; **it is not implemented yet** ([#1](https://github.com/maxmo74/cmdscribe/issues/1)), so today the two layers run side by side without cross-checking.
 
 Code layout follows two independent axes — capture depends on the *shell*, attribution depends on the *OS*:
 
@@ -165,7 +165,7 @@ In order of what users need first:
 - **`cmdscribe --check`** — a doctor mode that reports whether capture is actually working on this host right now, instead of assuming the install is still intact.
 - **DEB and RPM packages**, plus an OBS project for openSUSE.
 - **Ansible roles** for fleet deployment.
-- **`cmdscribe-reconcile`** — the shell↔auditd cross-check, which turns "we hope the hook was loaded" into a measured number.
+- **`cmdscribe-reconcile`** — the shell↔auditd cross-check, which turns "we hope the hook was loaded" into a measured number ([#1](https://github.com/maxmo74/cmdscribe/issues/1)).
 - BSD verification on real hardware.
 
 ## Development

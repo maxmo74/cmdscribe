@@ -25,8 +25,6 @@ check:
 # single time and reported success. A checker that cannot run must not be
 # written so that it passes; the zsh files are covered by `make syntax` for
 # parsing and by the pty matrix for behaviour, which is the honest version.
-#
-# tools/cmdscribe-reconcile is Python and is deliberately excluded.
 lint:
 	@command -v shellcheck >/dev/null || { \
 	  echo "shellcheck not installed:"; \

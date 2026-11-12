@@ -330,27 +330,22 @@ case "$OS" in
             fi
         fi
         # ---- rotation ------------------------------------------------ #
-        # Default is never rotated, and that is a decision rather than an
-        # omission. An interactive command log measured ~200 bytes a record, and
-        # non-interactive shells are not captured at all, so cron, scripts, CI
-        # runners and daemons add nothing. A very busy multi-user host lands under
-        # a gigabyte a year. Rotation buys nothing that capacity would not, and it
-        # costs three things:
+        # Never rotated by default, which is a decision rather than an omission.
+        # A record is ~200 bytes and non-interactive shells are not captured at
+        # all, so a very busy multi-user host stays under a gigabyte a year.
+        # Rotation buys nothing capacity would not, and costs three things:
         #
         #   - `rotate 12` with `weekly` deletes the audit trail after ~3 months,
-        #     against the rule this tool otherwise keeps without exception:
-        #     uninstall removes the tool and keeps the log.
-        #   - its failure mode is silent. It did exactly that, on every host,
-        #     for the whole life of this project. See CHANGELOG 0.0.4.
-        #   - it fragments evidence across a compressed chain, which is worse for
-        #     reconstruction rather than better.
+        #     against the rule this tool keeps without exception: uninstall
+        #     removes the tool and keeps the log.
+        #   - its failure mode is silent. It did exactly that, on every host, for
+        #     the whole life of this project. See CHANGELOG 0.0.4.
+        #   - it fragments evidence across a compressed chain.
         #
-        # Measured on Debian 13 and Ubuntu 24.04: no baseline logrotate config
-        # globs /var/log/*, so this log is rotated only if we ask for it. Declining
-        # to ask is therefore a real guarantee and not a hope -- and --check must
-        # keep asserting it, because a future distro baseline or a config-
-        # management glob could take rotation back silently and reintroduce the
-        # quiet death.
+        # No shipped logrotate config on Debian 13 or Ubuntu globs /var/log/*, so
+        # this log rotates only if we ask. --check must keep asserting that, since
+        # a distro baseline or a config-management glob could take rotation back
+        # silently and reintroduce the quiet death.
         if [ -d /etc/logrotate.d ]; then
             if [ "$WITH_ROTATE" = 1 ]; then
                 sed -e "s/@CS_LOG_USER@/$CS_LOG_USER/g" \

@@ -62,16 +62,16 @@ else
     die "zsh is required to check the zsh entry points; install it or the zsh files go unverified"
 fi
 
-# --- python: drive-pty.py and cmdscribe-reconcile --------------------------
+# --- python ----------------------------------------------------------------
 if command -v python3 >/dev/null 2>&1; then
     pys=""
-    for f in $(printf '%s\n' "$files" | grep -E '\.py$|cmdscribe-reconcile$'); do
+    for f in $(printf '%s\n' "$files" | grep -E '\.py$'); do
         head -1 "$f" | grep -q 'python' && pys="$pys $f"
     done
     if [ -n "$pys" ]; then
         # shellcheck disable=SC2086
         python3 -m py_compile $pys || die "python3 -m py_compile$pys"
-        rm -rf __pycache__ tests/__pycache__ ci/__pycache__ tools/__pycache__
+        rm -rf __pycache__ tests/__pycache__ ci/__pycache__
         note "py_compile:$pys"
     fi
 else
@@ -98,7 +98,7 @@ done
 # breaks the run with "Permission denied" on someone's first attempt.
 mode_fail=0
 for f in install.sh uninstall.sh ci/syntax-check.sh ci/install-smoke.sh \
-         tests/integration.sh tests/pty-matrix.sh tools/cmdscribe-reconcile; do
+         ci/install-smoke-macos.sh tests/integration.sh tests/pty-matrix.sh; do
     [ -f "$f" ] || continue
     [ -x "$f" ] && continue
     die "should be executable but is not: $f"
@@ -129,7 +129,7 @@ fi
 # by extension, so adding lib/capture/fish.fish without a header fails here
 # rather than in review.
 missing=""
-for f in $(printf '%s\n' "$files" | grep -E '\.(sh|bash|zsh|py)$|^tools/cmdscribe-'); do
+for f in $(printf '%s\n' "$files" | grep -E '\.(sh|bash|zsh|py)$'); do
     [ -f "$f" ] || continue
     grep -q 'SPDX-License-Identifier: GPL-3.0-or-later' "$f" || missing="$missing $f"
 done

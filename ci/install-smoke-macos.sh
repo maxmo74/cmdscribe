@@ -7,27 +7,19 @@
 
 # End-to-end install smoke test on macOS, as root.
 #
-# ci/install-smoke.sh is Linux-only and says so. The acceptance matrix on
-# macos-latest sources entry.bash/entry.zsh directly and therefore never runs
-# install.sh -- which is exactly how a version of the macOS installer that read
-# its own version string out loud (a helper named say(), resolving to
-# /usr/bin/say) reached a release. macOS is the only platform with /usr/bin/say,
-# so macOS was the only place that bug was audible, and macOS was the one place
-# the installer was never executed.
-#
-# What this asserts that the matrix cannot:
+# The acceptance matrix on macos-latest sources the entry files directly and
+# never runs install.sh, so it cannot see any of this:
 #   - the runtime lands in /usr/local/share, not /usr/share. /usr is on the
-#     SIP-sealed read-only system volume, so the latter fails with EPERM *as
-#     root*. An installer that hardcodes /usr/share works perfectly on every
-#     Linux CI runner and fails on every Mac.
+#     SIP-sealed read-only volume, so the latter fails with EPERM *as root*:
+#     an installer hardcoding /usr/share is green on every Linux runner and
+#     dead on every Mac.
 #   - the hooks land in the three rc files macOS actually uses.
 #   - records reach the unified log, found with the exact query the README
-#     documents. If that query ever stops matching reality, this job goes red
-#     instead of a reader concluding their box is idle.
-#   - uninstall restores those rc files byte-identically, verified against
-#     backups this script took itself rather than against the ones install.sh
-#     made, so the test cannot simply agree with the installer's mistakes.
-#   - the log survives the uninstall.
+#     documents, so a query that drifts from reality reddens CI instead of
+#     reading as an idle machine.
+#   - uninstall restores those rc files byte-identically, against backups this
+#     script took itself rather than the ones install.sh made, so the test
+#     cannot simply agree with the installer's mistakes -- and keeps the log.
 
 set -eu
 

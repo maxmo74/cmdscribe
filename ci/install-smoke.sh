@@ -75,28 +75,18 @@ rsyslogd -N1 >/tmp/rsyslog-check 2>&1 || { cat /tmp/rsyslog-check; die "rsyslogd
 printf '   rsyslogd -N1 ok\n'
 
 step "3. capture through a real login shell (bash)"
-# Runs with a scrubbed environment. This is NOT because scrubbing fixes anything
-# -- it does not, and the record is kept here because the wrong conclusion was
-# drawn from this job once already. The control that appeared to implicate
-# GitHub's injected shell integration differed in TWO ways at once: it had a
-# clean environment and it was a later session. Re-running the probe scrubbed as
-# the FIRST session still loses command one, so the environment is exonerated and
-# the real discriminator is first-session-of-boot. A control that varies two
-# variables proves nothing; that is why this comment is longer than the code.
+# Scrubbed environment: not a fix, and kept explicit because this job once
+# implicated GitHub's injected shell integration on the strength of a control
+# that varied two variables at once -- a clean environment AND a later session.
 #
-# What is known, and the hypothesis has moved twice so it is written with its
-# evidence rather than its confidence. The missing record correlates with the
-# FIRST RECORD WRITTEN INTO A FRESHLY CREATED LOG FILE, not with the first
-# command of a session: step 3 runs against a log that step 0 deleted and loses
-# a record; 3b, 3c and 4 run against an existing file and lose nothing; step 9
-# deleted the file again and lost one again. That points at rsyslog's lazy file
-# creation on Ubuntu, where rsyslog runs unprivileged, rather than at the shell
-# hook at all -- which would also explain why no bash-level change fixed it and
-# why Debian never showed it.
+# What is known: the missing record correlates with the FIRST RECORD WRITTEN
+# INTO A FRESHLY CREATED LOG FILE, not with the first command of a session.
+# Steps running against an existing file lose nothing; steps against a file that
+# was just deleted lose one. That points at rsyslog's lazy file creation on
+# Ubuntu, where it runs unprivileged, rather than at the shell hook.
 #
-# Not established. The failure path dumps the log, the shell's own view of
-# PROMPT_COMMAND/HISTCONTROL/HISTFILE/history, and a scrubbed retry, so the next
-# person starts from data rather than from this paragraph.
+# Not established. The failure path below dumps the shell's own view of
+# PROMPT_COMMAND/HISTCONTROL/HISTFILE so the next person starts from data.
 env -i PATH="$PATH" HOME="$HOME" TERM=xterm \
     python3 tests/drive-pty.py bash system 30 /tmp/smoke-warm.log >/dev/null 2>&1 || true
 sleep 2
@@ -156,22 +146,18 @@ if ! grep -q "$MARK" "$LOG"; then
     # CI should say so instead of leaving the script to guess from an
     # environment the privilege change may have laundered.
     if [ "${CMDSCRIBE_CI:-}" = "1" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-        # LOUD SKIP -- not a silent one, which is the whole distinction.
+        # LOUD skip, not a silent one -- that is the whole distinction.
         #
-        # Currently DORMANT. The warm-up above creates the log file, this branch
-        # has not fired since, and the first-command assertion is enforced again.
-        # It stays because the underlying behaviour -- the first record written
-        # into a freshly created log file can be dropped -- is documented and
-        # unfixed (SECURITY.md, Known limitations: "first record written into a
-        # newly created log file can be dropped"); if it reappears this reports itself
-        # loudly instead of quietly reddening a suite that would then be telling
-        # the truth about something else.
+        # Currently DORMANT: the warm-up above creates the log, so this branch
+        # has not fired since and the first-command assertion is enforced. It
+        # stays because the underlying behaviour -- the first record into a
+        # freshly created log file can be dropped -- is documented and unfixed.
+        # If it reappears this reports itself instead of reddening a suite that
+        # is otherwise telling the truth about something else.
         #
-        # The assertion is unconditional everywhere else, including any real
-        # host, because that is where it would matter. Everything after this
-        # point still runs unconditionally -- 3b, 3c and step 4 all capture
-        # through later sessions -- so a logger that is actually broken cannot
-        # hide behind this branch.
+        # Every other assertion, on every real host, stays unconditional: 3b, 3c
+        # and step 4 all capture through later sessions, so a logger that is
+        # actually broken cannot hide behind this branch.
         printf '\n   ============================================================\n'
         printf '   SKIP: first-command-of-session assertion NOT enforced.\n'
         printf '         Scope: CI runner, and only the first probe session.\n'
